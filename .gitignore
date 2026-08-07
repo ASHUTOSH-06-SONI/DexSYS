@@ -1,0 +1,16 @@
+# Node
+**/node_modules/
+
+# Rust
+**/target/
+**/*.rs.bk
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+
+# Environment
+.env
+.env.*
