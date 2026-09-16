@@ -4,5 +4,4 @@ pub mod state;
 pub mod error;
 pub mod order;
 pub mod token;
-
 pub use order::{Order, OrderSide, OrderType};

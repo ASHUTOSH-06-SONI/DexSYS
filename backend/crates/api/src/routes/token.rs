@@ -1,10 +1,13 @@
-use axum::{extract::Path, routing::get, Json, Router};
+use axum::{extract::{Path,State}, routing::get, Json, Router};
 use crate::token::TokenInfo;
 use crate::error::TokenError;
-pub fn router()-> Router{
-    Router::new().route("/tokens/{symbol}", get(tokens))
+use crate::state::AppState;
+pub fn router()-> Router<AppState>{
+
+    Router::<AppState>::new().route("/tokens/{symbol}",get(tokens)
+)
 }
-async fn tokens(Path(symbol): Path<String>) -> Result<Json<TokenInfo>, TokenError> {
+async fn tokens(State(state): State<AppState>,Path(symbol): Path<String>) -> Result<Json<TokenInfo>, TokenError> {
     let eth = TokenInfo {
         symbol: "ETH".to_string(),
         name: "Ethereum".to_string(),
