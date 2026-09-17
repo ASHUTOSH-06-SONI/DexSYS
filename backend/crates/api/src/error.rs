@@ -1,4 +1,4 @@
-use axum::{http::StatusCode, response::{IntoResponse,Response}};
+use axum::{http::StatusCode, response::{IntoResponse,Response},Json,};
 
 #[derive(Debug)]
 pub enum TokenError{
@@ -8,7 +8,7 @@ pub enum TokenError{
 impl IntoResponse for TokenError{
     fn into_response(self)->Response{
         match self{
-            TokenError::NotFound=>StatusCode::NOT_FOUND.into_response(),
+            TokenError::NotFound=>{(StatusCode::NOT_FOUND,Json(serde_json::json!({"error": "Token Not Found"})),).into_response()}
         }
     }
 }
