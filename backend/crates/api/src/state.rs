@@ -1,9 +1,13 @@
 // How does main.rs give this AppState to Axum, and how does tokens() get it back?
 use std::collections::HashMap;
 use crate::token::TokenInfo;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use crate::order::Order;
 #[derive(Clone)]
 pub struct AppState {
     pub tokens: HashMap<String, TokenInfo>,
+    pub orders: Arc<RwLock<HashMap<String, Order>>>,
 }
 impl AppState{
     pub fn new()->Self{
@@ -35,9 +39,10 @@ impl AppState{
             ],
         };
 
+        
         tokens.insert("ETH".to_string(),eth);
         tokens.insert("BTC".to_string(),btc);
-
-        Self{tokens}
+        let orders = Arc::new(RwLock::new(HashMap::new()));
+        Self{tokens,orders,}
     }
 }
