@@ -13,6 +13,12 @@ pub enum OrderType{
     Market,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum OrderStatus {
+    Pending,
+    Filled,
+    Cancelled,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Order{
     pub id: String,
     pub user_id: String,
@@ -21,6 +27,7 @@ pub struct Order{
     pub order_type: OrderType,
     pub price: Option<f64>,
     pub quantity: f64,
+    pub status: OrderStatus,
 }
 
 impl Order{

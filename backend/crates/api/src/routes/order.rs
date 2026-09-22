@@ -1,6 +1,6 @@
 use axum::{routing::{get,post,delete},Json,Router, extract::{Path,State},http::StatusCode};
 use crate::state::AppState;
-use crate::order::Order;
+use crate::order::{Order, OrderStatus};
 use crate::error::OrderError;
 
 pub fn router()-> Router<AppState>{
@@ -11,6 +11,8 @@ pub fn router()-> Router<AppState>{
 }
 async fn create_order(State(state): State<AppState>,Json(order): Json<Order>,)->Result<Json<Order>,OrderError>{
     order.validate()?; 
+    let mut order = order;
+    order.status = OrderStatus::Pending;
     let mut orders = state.orders.write().await;
     if orders.contains_key(&order.id){
         return Err(OrderError::AlreadyExists);
@@ -37,10 +39,11 @@ async fn get_orders(State(state):State<AppState>,)->Json<Vec<Order>>{
 }
 async fn cancel_order(State(state): State<AppState>,Path(id): Path<String>,)->Result<StatusCode, OrderError>{
     let mut orders = state.orders.write().await;
-    if orders.remove(&id).is_some(){
-        Ok(StatusCode::NO_CONTENT)
-    }
-    else{
-        Err(OrderError::NotFound)
+    match orders.get_mut(&id) {
+        Some(order) => {
+            order.status = OrderStatus::Cancelled;
+            Ok(StatusCode::NO_CONTENT)
+        }
+        None => Err(OrderError::NotFound),
     }
 }
