@@ -1,5 +1,5 @@
 # Usage
 
-Run DexSYS using the commands below.
+Launch DexSYS using CLI.
 
 Example: dexsys --help
