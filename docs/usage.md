@@ -1,5 +1,5 @@
 # Usage
 
-Run DexSYS using the commands below.
+Run DexSYS from the terminal.
 
 Example: dexsys --help
