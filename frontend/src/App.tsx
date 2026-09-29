@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { DEMO_RECENT_TRADES, DEMO_TOKENS } from './data/demoData'
-import { getVisibleMarkets, selectMarketToken } from './domain/marketSelection'
+import { getVisibleMarkets, selectMarketToken, type MarketFilter } from './domain/marketSelection'
 import { calculateSwapQuote } from './domain/swapQuote'
 import { getMaxAmount, reverseTokenPair } from './domain/swapState'
 import { loadThemePreference, saveThemePreference } from './domain/themePreference'
@@ -9,7 +9,8 @@ import TokenInput from './components/TokenInput'
 import type { Token } from './types'
 import './App.css'
 
-const timeframes = ['1H', '24H', '1W', '1M', '1Y', 'ALL']
+const timeframes = ['5M', '15M', '1H', '4H', '1D', '1W']
+const chartPoints = '0,170 28,156 56,161 84,139 112,145 140,120 168,128 196,111 224,116 252,88 280,97 308,71 336,79 364,55 392,61 420,42 448,48 476,27 504,36 532,18 560,30 588,9 616,20 644,5'
 const changeTone = (change: string) => change.startsWith('-') ? 'negative' : 'positive'
 
 function App() {
@@ -19,8 +20,8 @@ function App() {
   const [activeTab, setActiveTab] = useState<'swap' | 'orders'>('swap')
   const [selectedToken, setSelectedToken] = useState('ETH')
   const [theme, setTheme] = useState<'light' | 'dark'>(() => loadThemePreference(window.localStorage))
-  const [timeframe, setTimeframe] = useState('24H')
-  const [marketFilter, setMarketFilter] = useState<'all' | 'movers'>('all')
+  const [timeframe, setTimeframe] = useState('1H')
+  const [marketFilter, setMarketFilter] = useState<MarketFilter>('all')
   const [marketSearch, setMarketSearch] = useState('')
   const [reviewOpen, setReviewOpen] = useState(false)
   const [notice, setNotice] = useState('')
@@ -75,7 +76,6 @@ function App() {
   const to = tokens.find((item) => item.symbol === toToken) ?? tokens.find((item) => item.symbol !== from.symbol) ?? tokens[0]
   const token = tokens.find((item) => item.symbol === selectedToken) ?? tokens[0]
   const visibleMarkets = getVisibleMarkets(tokens, marketSearch, marketFilter)
-
   const quote = calculateSwapQuote(amount, from, to)
 
   const switchTokens = () => {
@@ -96,24 +96,29 @@ function App() {
 
   const confirmSwap = () => {
     setReviewOpen(false)
-    setNotice('Preview only · transaction submission is not connected')
+    setNotice('Local quote preview closed · no order was submitted')
     window.setTimeout(() => setNotice(''), 4200)
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${theme === 'dark' ? 'dark' : ''}`}>
+      <div className="announcement"><span className="announcement-dot" /> DexSYS Testnet · API-backed token metadata · Quotes are indicative <span className="announcement-link">Integration status</span></div>
+
       <header className="topbar">
-        <a className="brand" href="#trade" aria-label="DexSYS home"><span className="brand-mark">D</span><span className="brand-name">Dex<span>SYS</span></span></a>
-        <nav className={`nav-links ${mobileMenuOpen ? 'mobile-open' : ''}`} id="primary-navigation" aria-label="Primary navigation">
-          <a className="active" href="#trade" onClick={() => setMobileMenuOpen(false)}>Exchange</a>
+        <a className="brand" href="#trade" aria-label="DexSYS home">
+          <span className="brand-mark">D</span>
+          <span><strong>DexSYS</strong><small>DECENTRALIZED EXCHANGE</small></span>
+        </a>
+        <nav className={`nav-links ${mobileMenuOpen ? 'open' : ''}`} id="primary-navigation" aria-label="Primary navigation">
+          <a className="active" href="#trade" onClick={() => setMobileMenuOpen(false)}>Trade</a>
           <a href="#markets" onClick={() => setMobileMenuOpen(false)}>Markets</a>
-          <a href="#portfolio" onClick={() => setMobileMenuOpen(false)}>Portfolio</a>
           <a href="#activity" onClick={() => setMobileMenuOpen(false)}>Activity</a>
+          <a href="#protocol" onClick={() => setMobileMenuOpen(false)}>Protocol</a>
         </nav>
-        <div className="topbar-actions">
-          <button className="theme-toggle" type="button" aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? '◐' : '☼'}</button>
+        <div className="top-actions">
+          <button className="icon-button" type="button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>{theme === 'dark' ? '☼' : '◐'}</button>
           <button className="wallet-button" type="button" disabled title="Wallet integration is not available yet"><span className="status-dot" />Wallet pending</button>
-          <button className="menu-toggle" type="button" aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'} aria-expanded={mobileMenuOpen} aria-controls="primary-navigation" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>{mobileMenuOpen ? '×' : '☰'}</button>
+          <button className="menu-button" type="button" onClick={() => setMobileMenuOpen(!mobileMenuOpen)} aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'} aria-expanded={mobileMenuOpen} aria-controls="primary-navigation">{mobileMenuOpen ? '×' : '☰'}</button>
         </div>
       </header>
 
@@ -122,51 +127,105 @@ function App() {
         {apiError && <span className="backend-status-error" title={apiError}>{apiError}</span>}
         {apiStatus === 'offline' && <button type="button" onClick={() => { setApiStatus('loading'); setApiError(''); setRetryTokenLoad((attempt) => attempt + 1) }}>Retry</button>}
       </div>
-      <div className="market-tape"><span className="tape-label"><i /> TESTNET MARKETS</span>{tokens.map((item) => <span className="tape-item" key={item.symbol}><b>{item.symbol}/{item.symbol === 'USDC' ? 'USD' : 'USDC'}</b><strong>{item.price}</strong><em className={changeTone(item.change)}>{item.change}</em></span>)}<span className="tape-disclaimer">Indicative prices</span></div>
 
-      <div className="page-content" id="trade">
-        <section className="instrument-heading"><div className="instrument-title"><span className="asset-symbol">{token.icon}</span><div><div className="pair-name">{token.symbol}<span>/</span>{token.symbol === 'USDC' ? 'USD' : 'USDC'} <span className="pair-caret">⌄</span></div><span className="instrument-caption">{token.name} · DexSYS Testnet</span></div></div><div className="instrument-price"><strong>{token.price}</strong><span className={changeTone(token.change)}>{token.change} <small>24h</small></span></div><div className="network-card"><span>Network</span><strong><i /> DexSYS Testnet</strong></div></section>
+      <section className="hero-copy" id="trade">
+        <div>
+          <p className="eyebrow">DEXSYS TESTNET · EXCHANGE PREVIEW</p>
+          <h1>Markets, without the middleman.</h1>
+          <p className="subtitle">A responsive trading workspace for the DexSYS API. Token metadata is backend-seeded; charts, orders, and quotes remain clearly marked as previews.</p>
+          <div className="hero-actions"><a href="#terminal" className="primary-link">Open trading terminal <span>↗</span></a><a href="#protocol" className="secondary-link">Integration status</a></div>
+        </div>
+        <div className="network-card"><span>NETWORK</span><strong><i /> DexSYS Testnet</strong><small>Wallet and chain connection pending</small></div>
+      </section>
 
-        <section className="workspace">
-          <div className="market-workspace">
-            <section className="chart-panel" aria-labelledby="chart-title">
-              <div className="chart-toolbar"><div className="chart-tabs"><button className="chart-tab active" id="chart-title">Chart</button><button className="chart-tab" onClick={() => document.getElementById('markets')?.scrollIntoView({ behavior: 'smooth' })}>Market data</button></div><div className="timeframes" aria-label="Chart timeframe">{timeframes.map((period) => <button key={period} className={period === timeframe ? 'selected' : ''} onClick={() => setTimeframe(period)}>{period}</button>)}</div></div>
-              <div className="chart-summary"><div><span>Price · {timeframe}</span><strong>{token.price}</strong></div><span className={`chart-change ${changeTone(token.change)}`}>↗ {token.change}</span></div>
-              <div className="chart-wrap"><svg className="price-chart" viewBox="0 0 920 300" preserveAspectRatio="none" role="img" aria-label={`${token.symbol} indicative price chart, rising over ${timeframe}`}><defs><linearGradient id="chart-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="var(--chart)" stopOpacity=".2" /><stop offset="100%" stopColor="var(--chart)" stopOpacity="0" /></linearGradient></defs><path className="chart-area" d="M0 222 C28 213 42 221 62 198 S102 205 127 186 157 192 178 164 206 184 229 156 264 168 289 144 323 168 348 135 377 146 402 121 435 140 458 117 485 125 510 104 540 129 565 94 594 111 623 78 652 105 678 81 706 94 734 66 760 84 791 50 820 68 850 43 880 56 920 28 L920 300 L0 300 Z" /><path className="chart-line" d="M0 222 C28 213 42 221 62 198 S102 205 127 186 157 192 178 164 206 184 229 156 264 168 289 144 323 168 348 135 377 146 402 121 435 140 458 117 485 125 510 104 540 129 565 94 594 111 623 78 652 105 678 81 706 94 734 66 760 84 791 50 820 68 850 43 880 56 920 28" /><line className="chart-crosshair" x1="0" y1="97" x2="920" y2="97" /><circle className="chart-point" cx="920" cy="28" r="5" /><text x="8" y="292">09:00</text><text x="230" y="292">13:00</text><text x="460" y="292">17:00</text><text x="690" y="292">21:00</text><text x="875" y="292">NOW</text></svg><div className="chart-axis"><span>{token.price}</span><span>{token.price}</span><span>{token.price}</span><span>{token.price}</span></div><div className="volume-bars" aria-hidden="true">{[23, 36, 27, 50, 32, 44, 62, 35, 55, 40, 70, 46, 60, 37, 76, 54, 42, 68, 48, 82, 57, 73, 51, 65, 43, 76, 58, 90, 62, 48, 74, 55, 84, 61, 70, 52, 93, 66, 80, 59].map((height, index) => <span key={index} style={{ height: `${height}%` }} />)}</div></div>
-              <div className="chart-footer"><span>DexSYS Testnet · {token.symbol}/{token.symbol === 'USDC' ? 'USD' : 'USDC'}</span><span><i /> Illustrative chart · history API pending</span></div>
-            </section>
+      <section className="ticker-strip" aria-label="Market ticker">
+        {tokens.map((item) => <button key={item.symbol} onClick={() => selectToken(item.symbol)}><span>{item.symbol}</span><strong>{item.price}</strong><em className={changeTone(item.change)}>{item.change}</em></button>)}
+        <div className="ticker-more">MARKET HISTORY <strong>Not connected</strong></div>
+      </section>
 
-            <section className="market-table-panel" id="markets"><div className="section-heading market-heading"><div><p className="eyebrow">MARKETS</p><h2>Spot markets</h2></div><label className="market-search"><span>⌕</span><input aria-label="Search assets" placeholder="Search assets" value={marketSearch} onChange={(event) => setMarketSearch(event.target.value)} /></label></div><div className="market-controls"><div className="segmented-control"><button className={marketFilter === 'all' ? 'selected' : ''} onClick={() => setMarketFilter('all')}>All assets</button><button className={marketFilter === 'movers' ? 'selected' : ''} onClick={() => setMarketFilter('movers')}>Top movers</button></div><span>Indicative · USD</span></div><div className="asset-table"><div className="asset-table-head"><span>Asset / pair</span><span>Last price</span><span>24h change</span><span>{apiStatus === 'connected' ? 'API seed' : 'Demo / seed'}</span></div>{visibleMarkets.map((item) => <button className={`asset-row ${item.symbol === selectedToken ? 'is-active' : ''}`} key={item.symbol} onClick={() => selectToken(item.symbol)}><span className="asset-name"><i className={`coin coin-${item.symbol.toLowerCase()}`}>{item.icon}</i><span><strong>{item.name}</strong><small>{item.symbol} / {item.symbol === 'USDC' ? 'USD' : 'USDC'}</small></span></span><strong>{item.price}</strong><span className={changeTone(item.change)}>{item.change}</span><span className="asset-balance">{apiStatus === 'connected' ? 'API seed ' : 'Demo seed '}{item.balance.toLocaleString()} {item.symbol}</span></button>)}{visibleMarkets.length === 0 && <p className="empty-state">No supported assets match your search.</p>}</div><p className="table-footnote">Prices and seed amounts are indicative only; no wallet balance is connected.</p></section>
+      <section className="terminal" id="terminal">
+        <div className="terminal-main">
+          <div className="market-header">
+            <div className="pair-heading"><span className="pair-icon">{token.icon}</span><div><div className="pair-name">{token.symbol}<span>/ {token.symbol === 'USDC' ? 'USD' : 'USDC'}</span></div><small>DexSYS Testnet · indicative market</small></div></div>
+            <div className="price-block"><strong>{token.price}</strong><span className={changeTone(token.change)}>{token.change}</span></div>
+            <div className="market-stats"><span>24h high <b>Not available</b></span><span>24h low <b>Not available</b></span><span>Volume <b>Not provided by API</b></span></div>
           </div>
 
-          <aside className="trade-panel" aria-label="Trade panel"><div className="trade-panel-top"><div className="trade-tabs"><button className={activeTab === 'swap' ? 'selected' : ''} onClick={() => setActiveTab('swap')}>Swap</button><button className={activeTab === 'orders' ? 'selected' : ''} onClick={() => setActiveTab('orders')}>Orders</button></div><span className="settings-summary" title="Slippage tolerance">0.50% slippage</span></div>
-            {activeTab === 'swap' ? <><div className="trade-title"><div><h2>Swap preview</h2><p>Frontend quote · not an order</p></div><span className="fee-pill">0.30% indicative fee</span></div><TokenInput label="You pay" token={from} amount={amount} tokens={tokens} balanceLabel={apiStatus === 'connected' ? 'API seed' : 'Demo / seed'} onAmountChange={setAmount} onTokenChange={selectToken} onMax={maxAmount} disabledToken={to.symbol} /><button className="switch-button" aria-label="Switch tokens" onClick={switchTokens}>↕</button><TokenInput label="You receive" token={to} amount={quote} tokens={tokens} balanceLabel={apiStatus === 'connected' ? 'API seed' : 'Demo / seed'} onAmountChange={() => undefined} onTokenChange={setToToken} disabledToken={from.symbol} readOnly /><div className="quote-details"><div><span>Indicative rate</span><strong>1 {from.symbol} ≈ {calculateSwapQuote('1', from, to)} {to.symbol}</strong></div><div><span>Price impact</span><strong>Unavailable</strong></div><div><span>Network fee</span><strong>Not connected</strong></div><div><span>Route</span><strong>{from.symbol} → {to.symbol}</strong></div></div><button className="primary-action" disabled={!amount || Number(amount) <= 0} onClick={() => setReviewOpen(true)}>{!amount ? 'Enter an amount' : 'Review quote preview'}</button><p className="prototype-note">This local estimate is not an order or blockchain transaction.</p></> : <div className="orders-panel"><div className="trade-title"><div><h2>Sample orders</h2><p>Prototype history · backend orders not connected</p></div></div>{DEMO_RECENT_TRADES.map((trade) => <div className="order-row" key={`${trade.pair}-${trade.amount}`}><div><strong>{trade.pair}</strong><span>{trade.side} · {trade.amount}</span></div><div className="order-price"><strong>{trade.price}</strong><span className={trade.status === 'Filled' ? 'positive' : ''}>{trade.status}</span></div></div>)}</div>}
-          </aside>
-        </section>
+          <div className="chart-toolbar">
+            <div className="chart-tabs"><button className="active" type="button">Chart</button><button type="button" disabled title="Depth data is not available">Depth</button><button type="button" onClick={() => document.getElementById('token-information')?.scrollIntoView({ behavior: 'smooth' })}>Info</button></div>
+            <div className="timeframes">{timeframes.map((item) => <button key={item} className={timeframe === item ? 'active' : ''} onClick={() => setTimeframe(item)}>{item}</button>)}</div>
+          </div>
 
-      <section className="portfolio-summary" id="portfolio" aria-labelledby="portfolio-title">
-        <div className="portfolio-total"><p className="eyebrow">YOUR ACCOUNT</p><h2 id="portfolio-title">Portfolio overview</h2><span>Total balance</span><strong>—</strong><small>Wallet integration pending</small></div>
-        <div className="portfolio-assets">{tokens.map((item) => <div className="portfolio-asset" key={item.symbol}><span className={`coin coin-${item.symbol.toLowerCase()}`}>{item.icon}</span><span><strong>{item.name}</strong><small>{item.symbol}</small></span><span className="portfolio-asset-balance">—<small>{item.price}</small></span></div>)}</div>
+          <div className="chart">
+            <div className="chart-grid"><span>{token.price}</span><span>{token.price}</span><span>{token.price}</span><span>{token.price}</span><span>{token.price}</span></div>
+            <svg viewBox="0 0 644 190" preserveAspectRatio="none" role="img" aria-label="Illustrative chart; historical price data is unavailable">
+              <defs><linearGradient id="area" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopOpacity=".22" /><stop offset="1" stopOpacity="0" /></linearGradient></defs>
+              <polyline className="chart-area" points={`0,190 ${chartPoints} 644,190`} />
+              <polyline className="chart-line" points={chartPoints} />
+            </svg>
+            <div className="chart-cross"><span>{timeframe} · illustrative</span><b>{token.price}</b></div>
+          </div>
+          <p className="panel-footnote chart-disclaimer">Illustrative chart only · market history endpoint pending</p>
+
+          <div className="orderbook">
+            <div className="subhead"><h3>Order book</h3><span>Backend integration pending</span></div>
+            <div className="orderbook-empty"><strong>No orderbook data available</strong><p>The Rust orderbook and matching-engine crates are not implemented yet. No bid or ask levels are being simulated.</p></div>
+          </div>
+        </div>
+
+        <aside className="trade-panel">
+          <div className="panel-tabs"><button className={activeTab === 'swap' ? 'active' : ''} onClick={() => setActiveTab('swap')}>Swap</button><button className={activeTab === 'orders' ? 'active' : ''} onClick={() => setActiveTab('orders')}>Orders</button></div>
+          {activeTab === 'swap' ? <div className="swap-panel">
+            <div className="panel-title"><div><h2>Swap preview</h2><p>Frontend quote · not an order.</p></div><span>Indicative</span></div>
+            <TokenInput label="You pay" token={from} amount={amount} tokens={tokens} balanceLabel={apiStatus === 'connected' ? 'API seed' : 'Demo / seed'} onAmountChange={setAmount} onTokenChange={selectToken} onMax={maxAmount} disabledToken={to.symbol} />
+            <button className="switch-button" aria-label="Switch tokens" onClick={switchTokens}>↕</button>
+            <TokenInput label="You receive" token={to} amount={quote} tokens={tokens} balanceLabel={apiStatus === 'connected' ? 'API seed' : 'Demo / seed'} onAmountChange={() => undefined} onTokenChange={setToToken} disabledToken={from.symbol} readOnly />
+            <div className="quote-details"><span>Indicative rate</span><strong>1 {from.symbol} ≈ {calculateSwapQuote('1', from, to)} {to.symbol}</strong><span>Price impact</span><strong>Unavailable</strong><span>Network fee</span><strong>Not connected</strong></div>
+            <button className="primary-action" disabled={!amount || Number(amount) <= 0} onClick={() => setReviewOpen(true)}>{!amount ? 'Enter an amount' : 'Review quote preview'}</button>
+            <p className="panel-footnote">Local estimate only · no order or transaction is submitted</p>
+          </div> : <div className="orders-panel"><div className="panel-title"><div><h2>Sample orders</h2><p>Prototype history · backend orders not connected.</p></div></div>{DEMO_RECENT_TRADES.slice(0, 3).map((trade) => <div className="order-row" key={`${trade.time}-${trade.pair}`}><div><strong>{trade.pair}</strong><span>{trade.side} · {trade.amount}</span></div><div className="order-price"><strong>{trade.price}</strong><span className={trade.status === 'Filled' ? 'positive' : ''}>{trade.status}</span></div></div>)}</div>}
+        </aside>
+      </section>
+
+      <section className="markets-section" id="markets">
+        <div className="section-heading"><div><p className="eyebrow">MARKETS</p><h2>Explore assets</h2></div><div className="market-tools"><input value={marketSearch} onChange={(event) => setMarketSearch(event.target.value)} placeholder="Search assets" aria-label="Search assets" /><button className={marketFilter === 'all' ? 'filter-active' : ''} onClick={() => setMarketFilter('all')}>All</button><button className={marketFilter === 'movers' ? 'filter-active' : ''} onClick={() => setMarketFilter('movers')}>Top movers</button></div></div>
+        <div className="market-table">
+          <div className="market-head"><span>Asset</span><span>Price</span><span>24h change</span><span>24h volume</span><span>Action</span></div>
+          {visibleMarkets.map((item) => <button className={`market-table-row ${item.symbol === selectedToken ? 'selected-market' : ''}`} key={item.symbol} onClick={() => selectToken(item.symbol)}><span className="asset-cell"><i>{item.icon}</i><b>{item.name}</b><small>{item.symbol}</small></span><strong>{item.price}</strong><span className={changeTone(item.change)}>{item.change}</span><span>Not provided</span><span className="trade-arrow">Trade ↗</span></button>)}
+          {visibleMarkets.length === 0 && <div className="empty-state">No supported assets match your search.</div>}
+        </div>
+        <p className="panel-footnote">API prices and seed balances are indicative; wallet balances and market volume are not connected.</p>
+      </section>
+
+      <section className="protocol-section" id="protocol">
+        <div><p className="eyebrow">BUILT FOR TRANSPARENCY</p><h2>Trading infrastructure,<br /><span>without the black box.</span></h2></div>
+        <div className="protocol-grid">
+          <article><span>01</span><h3>Integration boundary</h3><p>The frontend does not custody assets or connect a wallet yet.</p></article>
+          <article><span>02</span><h3>Visible data status</h3><p>Token metadata comes from the Rust API; chart history and orderbook data are unavailable.</p></article>
+          <article><span>03</span><h3>Composable services</h3><p>Typed frontend services prepare the interface for backend contracts as they are implemented.</p></article>
+        </div>
+      </section>
+
+      <section className="activity-section" id="activity">
+        <div className="section-heading"><div><p className="eyebrow">ACTIVITY</p><h2>Sample trade history</h2></div></div>
+        <p className="panel-footnote">Representative demo data only · not loaded from the order API</p>
+        <div className="activity-table"><div className="table-head"><span>Time</span><span>Pair</span><span>Side</span><span>Amount</span><span>Price</span><span>Status</span></div>{DEMO_RECENT_TRADES.map((trade) => <div className="table-row" key={trade.time}><span>{trade.time}</span><strong>{trade.pair}</strong><span>{trade.side}</span><span>{trade.amount}</span><span>{trade.price}</span><span className={trade.status === 'Filled' ? 'positive' : ''}>{trade.status}</span></div>)}</div>
       </section>
 
       <section className="token-section" id="token-information" aria-labelledby="token-information-title">
-        <div className="section-title"><div><p className="eyebrow">VALIDATED ASSET</p><h2 id="token-information-title">Token information</h2></div><span className="validation-badge">✓ {token.validation}</span></div>
+        <div className="section-heading"><div><p className="eyebrow">ASSET REGISTRY</p><h2 id="token-information-title">Token information</h2></div><span className="validation-badge">{token.validation}</span></div>
         <div className="token-detail-grid">
           <div className="token-identity"><div className="large-token-icon">{token.icon}</div><div><h3>{token.name}</h3><p>{token.symbol} · Testnet asset</p></div></div>
           <div className="token-stat"><span>Indicative price</span><strong>{token.price}</strong><small className={changeTone(token.change)}>{token.change} 24h</small></div>
           <div className="token-stat"><span>Wallet balance</span><strong>—</strong><small>Wallet integration pending</small></div>
-          <div className="token-address"><span>Contract / identifier</span><code>{token.address}</code><small>Representative testnet identifier</small></div>
+          <div className="token-address"><span>Contract / identifier</span><code>{token.address}</code><small>Backend-seeded identifier</small></div>
         </div>
-        <div className="token-bottom"><div><span className="detail-label">Supported pairs</span><div className="pair-list">{token.pairs.map((pair) => <button key={pair} onClick={() => setSelectedToken(pair.split(' / ')[0])}>{pair}</button>)}</div></div><div className="validation-note"><strong>Validation note</strong><p>{token.note}</p></div></div>
+        <div className="token-bottom"><div><span className="detail-label">Supported pairs</span><div className="pair-list">{token.pairs.map((pair) => <button key={pair} onClick={() => selectToken(pair.split(' / ')[0])}>{pair}</button>)}</div></div><div className="validation-note"><strong>Validation note</strong><p>{token.note}</p></div></div>
       </section>
 
-      <section className="activity-section" id="activity">
-        <div className="section-title"><div><p className="eyebrow">ACTIVITY</p><h2>Recent trades</h2></div><button className="text-button" onClick={() => { setActiveTab('orders'); document.querySelector('.trade-panel')?.scrollIntoView({ behavior: 'smooth' }) }}>View orders →</button></div>
-        <div className="activity-table"><div className="table-head"><span>Pair</span><span>Side</span><span>Amount</span><span>Price</span><span>Status</span></div>{DEMO_RECENT_TRADES.map((trade) => <div className="table-row" key={`${trade.pair}-${trade.price}`}><strong>{trade.pair}</strong><span>{trade.side}</span><span>{trade.amount}</span><span>{trade.price}</span><span className={trade.status === 'Filled' ? 'positive' : ''}>{trade.status}</span></div>)}</div><p className="table-footnote">Representative demo history only; not loaded from the order API.</p>
-      </section>
-      <footer><a href="#trade">DexSYS / Exchange</a><span>Testnet environment · Quotes and token metadata are indicative</span><a href="#trade">Back to top ↑</a></footer>
-      </div>
-      {reviewOpen && <div className="modal-backdrop" role="presentation" onClick={() => setReviewOpen(false)}><section className="review-modal" role="dialog" aria-modal="true" aria-labelledby="review-title" onClick={(event) => event.stopPropagation()}><button className="modal-close" aria-label="Close review" autoFocus onClick={() => setReviewOpen(false)}>×</button><span className="modal-kicker">LOCAL QUOTE PREVIEW</span><h2 id="review-title">Review quote</h2><p className="modal-copy">This frontend estimate does not create an API order.</p><div className="review-pair"><span>{from.icon} {from.symbol}</span><strong>{amount || '0'} <small>→</small> {quote} {to.symbol}</strong></div><div className="review-line"><span>Order API</span><strong>Not submitted</strong></div><div className="review-warning">No wallet provider or transaction service is connected. Backend and blockchain validation remain authoritative.</div><button className="primary-action" onClick={confirmSwap}>Close preview</button></section></div>}
+      <footer id="footer"><div><strong>DexSYS</strong><span>Decentralized exchange infrastructure</span></div><div><span>Testnet environment</span><span>Token values are seeded and indicative</span></div></footer>
+
+      {reviewOpen && <div className="modal-backdrop" role="presentation" onClick={() => setReviewOpen(false)}><section className="review-modal" role="dialog" aria-modal="true" aria-labelledby="review-title" onClick={(event) => event.stopPropagation()}><button className="modal-close" aria-label="Close review" autoFocus onClick={() => setReviewOpen(false)}>×</button><p className="eyebrow">LOCAL QUOTE PREVIEW</p><h2 id="review-title">Review quote</h2><p className="modal-copy">This frontend estimate does not create an API order.</p><div className="review-route"><div><span>Pay</span><strong>{amount || '0'} {from.symbol}</strong></div><span className="route-arrow">→</span><div><span>Receive</span><strong>{quote} {to.symbol}</strong></div></div><div className="review-lines"><span>Rate <b>1 {from.symbol} ≈ {calculateSwapQuote('1', from, to)} {to.symbol}</b></span><span>Order API <b>Not submitted</b></span><span>Settlement <b>Not connected</b></span></div><div className="modal-warning">No wallet provider or transaction service is connected. This is a quote preview only.</div><button className="primary-action" onClick={confirmSwap}>Close preview</button></section></div>}
       {notice && <div className="toast" role="status">{notice}</div>}
     </main>
   )
