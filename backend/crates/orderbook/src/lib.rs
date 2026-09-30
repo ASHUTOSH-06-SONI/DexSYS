@@ -37,7 +37,38 @@ impl OrderBook {
     pub fn best_ask(&self) -> Option<&PriceLevel> {
         self.asks.first_key_value().map(|(_, level)| level)
     }
+    pub fn cancel_order(&mut self, order_id: &str)->bool{
+        let location = {
+            let mut found = None;
+            for (side,book) in [(OrderSide::Buy, &self.bids), (OrderSide::Sell, &self.asks,)]{
+                for(price,level) in book{
+                    let found_order = level.orders.iter().any(|order| order.id == order_id);
+                    if found_order{
+                        found = Some((side.clone(),*price));
+                        break;
+                    }
+                }
+                if found.is_some(){
+                    break;
+                }
+            }found
+        };
+        let Some((side,price)) = location else{
+            return false;
+        };
+        let book = match side{
+            OrderSide::Buy => &mut self.bids,
+            OrderSide::Sell => &mut self.asks,
+        };
+        let level = book.get_mut(&price).unwrap();
+        level.orders.retain(|order| order.id != order_id);
+        if level.orders.is_empty() {
+            book.remove(&price);
+        }
+        true
+    }
 }
+
 
 #[cfg(test)]
 mod tests {
