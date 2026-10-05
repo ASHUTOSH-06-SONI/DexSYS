@@ -2,8 +2,6 @@
 
 DexSYS is a decentralized exchange (DEX) prototype built as a full-stack project with a Rust API backend, a React + TypeScript trading interface, and a Solidity/Hardhat contract workspace. The project currently focuses on a testnet-ready exchange preview: seeded token metadata is exposed via the backend, the frontend presents a responsive trading UI, and the core DEX engine components are scaffolded for future exchange execution.
 
-This repository is intentionally a working prototype rather than a production-grade exchange. It demonstrates API contracts, front-end UX patterns, and the beginning of the matching-engine and orderbook layers that will support a live DEX once wallet, settlement, and on-chain logic are integrated.
-
 ## Project status
 
 Current implementation highlights:
