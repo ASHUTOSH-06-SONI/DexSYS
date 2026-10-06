@@ -253,7 +253,7 @@ npm run build
 
 The `contracts/` directory is a Hardhat 3 project for Solidity-based DEX settlement and blockchain integration work. The project currently includes a Hardhat configuration targeting a simulated mainnet and OP chain, plus the packaging required for future on-chain contract development.
 
-The current project is not yet connected to the Rust backend or the frontend UI. It is intended to host the settlement layer when the DEX moves beyond the prototype phase.
+Settlement vault integration added to the project.
 
 ### Contract project run instructions
 
