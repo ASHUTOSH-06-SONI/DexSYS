@@ -14,6 +14,7 @@ contract SettlementVault {
     }
 
     function withdraw(uint256 amount) external {
+        require(amount > 0, "Zero withdrawal");
         require(balances[msg.sender] >= amount, "Insufficient balance");
         balances[msg.sender] -= amount;
         payable(msg.sender).transfer(amount);
