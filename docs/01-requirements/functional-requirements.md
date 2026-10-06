@@ -31,7 +31,7 @@ The system shall allow a user to connect a supported blockchain wallet to the pl
 - The system shall reject an unsupported wallet type.
 - The system shall display the connection status to the user.
 - The system shall allow the user to disconnect the wallet.
-- The system shall prevent unauthorized access to the user's account information.
+- The system shall prevent unauthorized access to user account information.
 
 **Acceptance criteria:**
 
@@ -58,7 +58,7 @@ The system shall verify that a wallet signature is valid before granting access 
 **Acceptance criteria:**
 
 1. A user must sign a challenge before performing wallet-specific actions.
-2. An invalid signature is rejected and the user is not authenticated.
+2. An invalid signature is rejected, and the user is not authenticated.
 3. The system does not expose private keys or signing credentials.
 
 ### FR-03: Market Asset Registration
@@ -394,7 +394,7 @@ The system shall provide users with a list of their open orders and their curren
 **Acceptance criteria:**
 
 1. A user can view all current open orders.
-2. A filled or cancelled order is removed from or marked as inactive in the open order list.
+2. A filled or cancelled order is removed from, or marked inactive in, the open order list.
 3. A user can cancel an eligible open order.
 
 ### FR-19: Market Search and Filtering
@@ -417,7 +417,7 @@ The system shall allow users to search and filter available trading markets.
 2. A user can filter the market list using supported criteria.
 3. No matching search results are clearly indicated.
 
-### FR-20: Governable Proposal Listing
+### FR-20: Governance Proposal Listing
 
 **Priority:** Medium  
 **Status:** Mandatory
