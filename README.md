@@ -1,7 +1,4 @@
 # DexSYS
-## Git Demonstration
-
-This project is being used to demonstrate Git and GitHub version control operations.
 
 The project demonstrates basic version control, branching, merging, and collaborative development using Git and GitHub.
 DexSYS is a decentralized exchange (DEX) prototype built as a full-stack project with a Rust API backend, a React + TypeScript trading interface, and a Solidity/Hardhat contract workspace. The project currently focuses on a testnet-ready exchange preview: seeded token metadata is exposed via the backend, the frontend presents a responsive trading UI, and the core DEX engine components are scaffolded for future exchange execution.
