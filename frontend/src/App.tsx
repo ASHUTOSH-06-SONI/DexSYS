@@ -4,6 +4,7 @@ import { getVisibleMarkets, selectMarketToken, type MarketFilter } from './domai
 import { calculateSwapQuote } from './domain/swapQuote'
 import { getMaxAmount, reverseTokenPair } from './domain/swapState'
 import { loadThemePreference, saveThemePreference } from './domain/themePreference'
+import { getDemoOrderBook } from './domain/orderBook'
 import { getMarketTokens } from './services/tokenService'
 import TokenInput from './components/TokenInput'
 import type { Token } from './types'
@@ -77,6 +78,7 @@ function App() {
   const token = tokens.find((item) => item.symbol === selectedToken) ?? tokens[0]
   const visibleMarkets = getVisibleMarkets(tokens, marketSearch, marketFilter)
   const quote = calculateSwapQuote(amount, from, to)
+  const demoOrderBook = getDemoOrderBook(`${from.symbol} / ${to.symbol}`)
 
   const switchTokens = () => {
     const reversedPair = reverseTokenPair({ fromToken, toToken })
@@ -168,8 +170,28 @@ function App() {
           <p className="panel-footnote chart-disclaimer">Illustrative chart only · market history endpoint pending</p>
 
           <div className="orderbook">
-            <div className="subhead"><h3>Order book</h3><span>Backend integration pending</span></div>
-            <div className="orderbook-empty"><strong>No orderbook data available</strong><p>The Rust orderbook and matching-engine crates are not implemented yet. No bid or ask levels are being simulated.</p></div>
+            <div className="subhead"><h3>Order book</h3><span>Demo data</span></div>
+            <div className="orderbook-grid">
+              <div>
+                <div className="orderbook-header"><span>Bid</span><span>Size</span></div>
+                {demoOrderBook.bids.map((level) => (
+                  <div className="orderbook-row" key={level.price}>
+                    <strong>{level.price}</strong>
+                    <span>{level.quantity}</span>
+                  </div>
+                ))}
+              </div>
+              <div>
+                <div className="orderbook-header"><span>Ask</span><span>Size</span></div>
+                {demoOrderBook.asks.map((level) => (
+                  <div className="orderbook-row ask" key={level.price}>
+                    <strong>{level.price}</strong>
+                    <span>{level.quantity}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <p className="panel-footnote">Sample order levels only · no live backend data is connected.</p>
           </div>
         </div>
 

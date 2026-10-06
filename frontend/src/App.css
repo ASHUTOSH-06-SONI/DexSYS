@@ -204,6 +204,14 @@ footer span:first-child { font-weight: 800; color: #697384; }
 .order-row { border-bottom-color: var(--border-soft); }
 .order-row strong { color: var(--text); font-size: 11px; }
 .order-row span { color: var(--text-faint); font-size: 9px; }
+.orderbook { padding-top: 14px; }
+.orderbook-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.orderbook-header, .orderbook-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.orderbook-header { min-height: 26px; border-bottom: 1px solid var(--border-soft); color: var(--text-faint); font-size: 8px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.orderbook-row { min-height: 30px; border-bottom: 1px solid var(--border-soft); font-size: 9px; }
+.orderbook-row strong { color: var(--text); font-size: 10px; }
+.orderbook-row span { color: var(--text-faint); }
+.orderbook-row.ask strong { color: var(--negative); }
 .market-table-panel { padding: 17px 18px 12px; scroll-margin-top: 86px; }
 .section-heading { display: flex; justify-content: space-between; align-items: end; gap: 14px; margin-bottom: 15px; }
 .section-heading h2, .section-title h2 { margin: 0; color: var(--text); font-size: 18px; font-weight: 700; }
