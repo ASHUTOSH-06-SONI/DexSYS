@@ -4,3 +4,8 @@ making modifications and using git diff
 changes should be +3 lines added
 GitHub Git Assignment - DexSYS
 Feature Update
+## Git Workflow
+1. Create a branch
+2. Make changes
+3. Commit changes
+4. Push changes to GitHub
