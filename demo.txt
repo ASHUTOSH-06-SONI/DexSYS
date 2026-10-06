@@ -1,1 +1,4 @@
 "GitHub Git Assignment - DexSYS" | Set-Content demo.txt
+
+making modifications and using git diff
+changes should be +3 lines added
