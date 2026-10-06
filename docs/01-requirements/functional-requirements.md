@@ -8,7 +8,7 @@
 ## 1. Introduction
 
 This document defines the functional requirements for the DexSYS decentralized exchange platform. The requirements describe the behaviors that the system must provide to support wallet-based trading, order-book execution, automated market maker swaps, liquidity provision, portfolio visibility, governance, and secure settlement.
-
+The platform is designed to support decentralized trading and blockchain asset management.
 The terms **user**, **trader**, **liquidity provider**, and **governance participant** are used as follows:
 
 - **User:** A person who accesses the DexSYS platform.
