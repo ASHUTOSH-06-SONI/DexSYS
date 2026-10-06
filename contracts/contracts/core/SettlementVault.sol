@@ -8,7 +8,7 @@ contract SettlementVault {
     event Withdrawn(address indexed user, uint256 amount);
 
     function deposit() external payable {
-        require(msg.value > 0, "Zero deposit");
+        require(msg.value > 0, "Invalid deposit amount");
         balances[msg.sender] += msg.value;
         emit Deposited(msg.sender, msg.value);
     }
