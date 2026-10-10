@@ -22,7 +22,10 @@ async fn main() {
         .await
         .expect("Failed to initialize persistent demo token metadata");
 
-    let app = routes::router().with_state(AppState::new(pool));
+    let state = AppState::restore(pool)
+        .await
+        .expect("Failed to restore persisted limit orders into the in-memory orderbooks");
+    let app = routes::router().with_state(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await
         .expect("Failed to bind API listener");

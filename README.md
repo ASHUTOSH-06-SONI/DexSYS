@@ -114,7 +114,11 @@ Core backend components:
 - `/tokens/{symbol}` returns persistent token metadata for ETH and BTC
 - `/orders` supports list/create operations
 - `/orders/{id}` supports get/cancel operations
-- The orderbook and matching engine remain in memory and are not queried by persistence operations
+- Order submission serializes access to a per-trading-pair in-memory matching engine
+- Pending limit orders are restored from PostgreSQL into the in-memory orderbooks at startup
+- Persisted order priority sequence preserves FIFO order when a price level is restored
+- Trades are persisted only from executions returned by `MatchingEngine::process_order`
+- Market-order submission is rejected because the existing engine dereferences a limit price and does not implement market-order behavior
 
 ### Current backend data model
 
@@ -342,9 +346,11 @@ cargo run --manifest-path backend/Cargo.toml -p api
 
 The example `DATABASE_URL` is `postgresql://localhost/dexsys`. Migrations are applied by the application; installing `sqlx-cli` is not required.
 
-The database stores prices and quantities as `NUMERIC(38,18)`. The current API still accepts/returns JSON numbers (`f64`); values are converted through decimal text, rejected if they exceed the database precision, and rejected on retrieval when they cannot round-trip exactly through the existing API number type. The orderbook/matching-engine `i64` values have no established shared unit scale and are not converted or persisted by an API execution flow.
+The database stores prices and quantities as `NUMERIC(38,18)`. API order prices are expressed in quote-token units per base-token unit, and quantities in base-token units. Matching uses checked fixed-point conversion: 100 engine price ticks per API price unit (0.01 price increments) and 1,000,000 engine quantity units per API quantity unit (0.000001 quantity increments). Values that are not exactly representable at those scales or exceed `i64` bounds are rejected; there is no rounding. Engine execution integers convert back to exact decimal strings for PostgreSQL `NUMERIC` writes. Existing API JSON remains numeric (`f64`), and database values that cannot round-trip through that contract are rejected when retrieved.
 
-PostgreSQL order writes and their audit events are transactional. PostgreSQL is not transactionally atomic with the in-memory matching engine or blockchain; a future execution/settlement service must add retry and reconciliation handling. Settlement status is application bookkeeping only and is not proof of on-chain confirmation.
+Each matching engine is in memory and scoped to one pair so the existing engine cannot cross-match orders from different pairs. API submissions and cancellations are serialized through shared state. Submission executes against a staged engine clone; the order, maker/taker remainders, actual trades, and audit rows are written in one PostgreSQL transaction, and the live engine is replaced only after commit. This prevents a failed database write from mutating that API process's live orderbook.
+
+PostgreSQL still cannot be transactionally atomic with in-memory matching or blockchain operations. There is no durable execution outbox/recovery protocol, and open orders are restored but prior trades are not replayed into matching. Settlement status is application bookkeeping only and is not proof of on-chain confirmation.
 
 ### Backend tests
 

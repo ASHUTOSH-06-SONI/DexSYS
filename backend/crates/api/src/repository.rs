@@ -46,6 +46,33 @@ pub struct TradeRecord {
     pub execution_quantity: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct RestingOrder {
+    pub id: String,
+    pub user_id: String,
+    pub trading_pair: String,
+    pub side: String,
+    pub price: String,
+    pub remaining_quantity: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct EngineOrderUpdate {
+    pub id: String,
+    pub remaining_quantity: String,
+    pub status: OrderStatus,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExecutionWrite {
+    pub id: String,
+    pub trading_pair_id: String,
+    pub buy_order_id: String,
+    pub sell_order_id: String,
+    pub execution_price: String,
+    pub execution_quantity: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettlementStatus {
     Pending,
@@ -264,6 +291,193 @@ pub async fn list_orders(pool: &PgPool) -> Result<Vec<Order>, RepositoryError> {
     .fetch_all(pool)
     .await?;
     rows.iter().map(order_from_row).collect()
+}
+
+pub async fn list_resting_orders(pool: &PgPool) -> Result<Vec<RestingOrder>, RepositoryError> {
+    let rows = sqlx::query(
+        "SELECT id, user_id, trading_pair_id, side, price::TEXT AS price,
+                remaining_quantity::TEXT AS remaining_quantity
+         FROM orders
+         WHERE status = 'PENDING' AND order_type = 'LIMIT'
+         ORDER BY trading_pair_id, priority_sequence",
+    )
+    .fetch_all(pool)
+    .await?;
+    rows.iter()
+        .map(|row| {
+            Ok(RestingOrder {
+                id: row.try_get("id")?,
+                user_id: row.try_get("user_id")?,
+                trading_pair: row.try_get("trading_pair_id")?,
+                side: row.try_get("side")?,
+                price: row.try_get("price")?,
+                remaining_quantity: row.try_get("remaining_quantity")?,
+            })
+        })
+        .collect()
+}
+
+pub async fn persist_matching_result(
+    pool: &PgPool,
+    order: &Order,
+    incoming_remaining: &str,
+    incoming_status: &OrderStatus,
+    maker_updates: &[EngineOrderUpdate],
+    executions: &[ExecutionWrite],
+) -> Result<(), RepositoryError> {
+    let incoming_remaining = decimal_string_to_numeric(incoming_remaining)?;
+    let mut transaction = pool.begin().await?;
+    let pair_is_available: bool = sqlx::query_scalar(
+        "SELECT EXISTS(
+            SELECT 1 FROM trading_pairs
+            WHERE id = $1 AND active = TRUE AND approved = TRUE
+         )",
+    )
+    .bind(&order.trading_pair)
+    .fetch_one(&mut *transaction)
+    .await?;
+    if !pair_is_available {
+        transaction.rollback().await?;
+        return Err(RepositoryError::InvalidFinancialValue(
+            "order pair must exist, be active, and be approved",
+        ));
+    }
+    insert_order(&mut transaction, order).await?;
+    for maker in maker_updates {
+        let remaining = decimal_string_to_numeric(&maker.remaining_quantity)?;
+        let status = order_status_to_db(&maker.status);
+        let result = sqlx::query(
+            "UPDATE orders
+             SET remaining_quantity = $2::NUMERIC, status = $3, updated_at = NOW()
+             WHERE id = $1 AND status = 'PENDING'",
+        )
+        .bind(&maker.id)
+        .bind(remaining)
+        .bind(status)
+        .execute(&mut *transaction)
+        .await?;
+        if result.rows_affected() != 1 {
+            transaction.rollback().await?;
+            return Err(RepositoryError::InvalidTransition);
+        }
+        insert_audit(
+            &mut transaction,
+            "order",
+            &maker.id,
+            "ORDER_MATCHED",
+            serde_json::json!({
+                "status": status,
+                "remaining_quantity": maker.remaining_quantity
+            }),
+        )
+        .await?;
+    }
+    let incoming_status = order_status_to_db(incoming_status);
+    let update = sqlx::query(
+        "UPDATE orders
+         SET remaining_quantity = $2::NUMERIC, status = $3, updated_at = NOW()
+         WHERE id = $1 AND status = 'PENDING'",
+    )
+    .bind(&order.id)
+    .bind(&incoming_remaining)
+    .bind(incoming_status)
+    .execute(&mut *transaction)
+    .await?;
+    if update.rows_affected() != 1 {
+        transaction.rollback().await?;
+        return Err(RepositoryError::InvalidTransition);
+    }
+    for execution in executions {
+        let price = decimal_string_to_numeric(&execution.execution_price)?;
+        let quantity = decimal_string_to_numeric(&execution.execution_quantity)?;
+        let valid_orders: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM orders buy
+                JOIN orders sell ON sell.trading_pair_id = buy.trading_pair_id
+                WHERE buy.id = $1 AND buy.side = 'BUY'
+                  AND sell.id = $2 AND sell.side = 'SELL'
+                  AND buy.trading_pair_id = $3
+             )",
+        )
+        .bind(&execution.buy_order_id)
+        .bind(&execution.sell_order_id)
+        .bind(&execution.trading_pair_id)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if !valid_orders {
+            transaction.rollback().await?;
+            return Err(RepositoryError::InvalidFinancialValue(
+                "execution orders must exist, have opposing sides, and belong to the pair",
+            ));
+        }
+        sqlx::query(
+            "INSERT INTO trades
+             (id, trading_pair_id, buy_order_id, sell_order_id,
+              execution_price, execution_quantity)
+             VALUES ($1, $2, $3, $4, $5::NUMERIC, $6::NUMERIC)",
+        )
+        .bind(&execution.id)
+        .bind(&execution.trading_pair_id)
+        .bind(&execution.buy_order_id)
+        .bind(&execution.sell_order_id)
+        .bind(price)
+        .bind(quantity)
+        .execute(&mut *transaction)
+        .await?;
+        insert_audit(
+            &mut transaction,
+            "trade",
+            &execution.id,
+            "TRADE_PERSISTED",
+            serde_json::json!({"trading_pair_id": execution.trading_pair_id}),
+        )
+        .await?;
+    }
+    insert_audit(
+        &mut transaction,
+        "order",
+        &order.id,
+        "ORDER_MATCHED",
+        serde_json::json!({
+            "status": incoming_status,
+            "remaining_quantity": incoming_remaining
+        }),
+    )
+    .await?;
+    transaction.commit().await?;
+    Ok(())
+}
+
+async fn insert_order(
+    transaction: &mut Transaction<'_, Postgres>,
+    order: &Order,
+) -> Result<(), RepositoryError> {
+    let price = order.price.map(f64_to_numeric).transpose()?;
+    let quantity = f64_to_numeric(order.quantity)?;
+    let side = match order.side {
+        OrderSide::Buy => "BUY",
+        OrderSide::Sell => "SELL",
+    };
+    let order_type = match order.order_type {
+        OrderType::Limit => "LIMIT",
+        OrderType::Market => "MARKET",
+    };
+    sqlx::query(
+        "INSERT INTO orders
+         (id, user_id, trading_pair_id, side, order_type, price, original_quantity,
+          remaining_quantity, status)
+         VALUES ($1, $2, $3, $4, $5, $6::NUMERIC, $7::NUMERIC, $7::NUMERIC, 'PENDING')",
+    )
+    .bind(&order.id)
+    .bind(&order.user_id)
+    .bind(&order.trading_pair)
+    .bind(side)
+    .bind(order_type)
+    .bind(price)
+    .bind(quantity)
+    .execute(&mut **transaction)
+    .await?;
+    Ok(())
 }
 
 pub async fn update_order_status(

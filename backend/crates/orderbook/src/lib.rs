@@ -2,11 +2,13 @@ use shared::{Order, OrderSide, OrderType};
 use std::collections::VecDeque;
 use std::collections::BTreeMap;
 
+#[derive(Clone)]
 pub struct PriceLevel {
     pub price: i64,
     pub orders: VecDeque<Order>,
 }
 
+#[derive(Clone)]
 pub struct OrderBook {
     pub bids: BTreeMap<i64, PriceLevel>,
     pub asks: BTreeMap<i64, PriceLevel>,
@@ -68,7 +70,6 @@ impl OrderBook {
         true
     }
 }
-
 
 #[cfg(test)]
 mod tests {
