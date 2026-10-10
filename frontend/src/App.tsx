@@ -1,32 +1,33 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { DEMO_RECENT_TRADES, DEMO_TOKENS } from './data/demoData'
+import { DEMO_TOKENS } from './data/demoData'
 import { getVisibleMarkets, selectMarketToken, type MarketFilter } from './domain/marketSelection'
-import { calculateSwapQuote } from './domain/swapQuote'
-import { getMaxAmount, reverseTokenPair } from './domain/swapState'
+import { activityFilters, filterOrders, type ActivityFilter } from './domain/orderActivity'
 import { loadThemePreference, saveThemePreference } from './domain/themePreference'
-import { getDemoOrderBook } from './domain/orderBook'
 import { createOrder, getOrder, listOrders, type ApiOrderSide, type Order } from './services/orderService'
 import { getMarketTokens } from './services/tokenService'
-import TokenInput from './components/TokenInput'
 import type { Token } from './types'
 import './App.css'
 
-const timeframes = ['5M', '15M', '1H', '4H', '1D', '1W']
-const chartPoints = '0,170 28,156 56,161 84,139 112,145 140,120 168,128 196,111 224,116 252,88 280,97 308,71 336,79 364,55 392,61 420,42 448,48 476,27 504,36 532,18 560,30 588,9 616,20 644,5'
+const supportedPairs = ['ETH/BTC', 'BTC/ETH']
+type ChartTab = 'chart' | 'depth' | 'info'
+type OrderPanelTab = 'entry' | 'orders'
+
 const changeTone = (change: string) => change.startsWith('-') ? 'negative' : 'positive'
-const supportedOrderPairs = new Set(['ETH/BTC', 'BTC/ETH'])
 
 function App() {
-  const [fromToken, setFromToken] = useState('ETH')
-  const [toToken, setToToken] = useState('USDC')
-  const [amount, setAmount] = useState('')
-  const [activeTab, setActiveTab] = useState<'swap' | 'orders'>('swap')
+  const [theme, setTheme] = useState(() => loadThemePreference(window.localStorage))
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [activeSection, setActiveSection] = useState('trade')
+  const [apiTokens, setApiTokens] = useState<Token[] | null>(null)
+  const [apiStatus, setApiStatus] = useState<'loading' | 'connected' | 'offline'>('loading')
+  const [apiError, setApiError] = useState('')
+  const [retryTokenLoad, setRetryTokenLoad] = useState(0)
   const [selectedToken, setSelectedToken] = useState('ETH')
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => loadThemePreference(window.localStorage))
-  const [timeframe, setTimeframe] = useState('1H')
-  const [marketFilter, setMarketFilter] = useState<MarketFilter>('all')
+  const [tradingPair, setTradingPair] = useState('ETH/BTC')
   const [marketSearch, setMarketSearch] = useState('')
-  const [reviewOpen, setReviewOpen] = useState(false)
+  const [marketFilter, setMarketFilter] = useState<MarketFilter>('all')
+  const [chartTab, setChartTab] = useState<ChartTab>('chart')
+  const [orderPanelTab, setOrderPanelTab] = useState<OrderPanelTab>('entry')
   const [orderSide, setOrderSide] = useState<ApiOrderSide>('Buy')
   const [orderQuantity, setOrderQuantity] = useState('')
   const [orderPrice, setOrderPrice] = useState('')
@@ -37,13 +38,18 @@ function App() {
   const [orders, setOrders] = useState<Order[]>([])
   const [ordersLoading, setOrdersLoading] = useState(false)
   const [ordersError, setOrdersError] = useState('')
+  const [ordersRevision, setOrdersRevision] = useState(0)
   const [refreshingOrderId, setRefreshingOrderId] = useState('')
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const [apiTokens, setApiTokens] = useState<Token[] | null>(null)
-  const [apiStatus, setApiStatus] = useState<'loading' | 'connected' | 'offline'>('loading')
-  const [apiError, setApiError] = useState('')
-  const [retryTokenLoad, setRetryTokenLoad] = useState(0)
+  const [activityFilter, setActivityFilter] = useState<ActivityFilter>('All')
+
   const tokens = apiTokens ?? DEMO_TOKENS
+  const token = tokens.find((item) => item.symbol === selectedToken) ?? tokens[0]
+  const visibleMarkets = getVisibleMarkets(tokens, marketSearch, marketFilter)
+  const [baseSymbol, quoteSymbol] = tradingPair.split('/')
+  const baseToken = tokens.find((item) => item.symbol === baseSymbol) ?? token
+  const orderPairSupported = supportedPairs.includes(tradingPair)
+  const openOrders = orders.filter((order) => order.status === 'Pending')
+  const activityOrders = filterOrders(orders, activityFilter)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -51,51 +57,25 @@ function App() {
   }, [theme])
 
   useEffect(() => {
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setReviewOpen(false)
-        setMobileMenuOpen(false)
-      }
-    }
-    window.addEventListener('keydown', handleEscape)
-    return () => window.removeEventListener('keydown', handleEscape)
-  }, [])
-
-  useEffect(() => {
     const controller = new AbortController()
-
     getMarketTokens(controller.signal).then((loadedTokens) => {
       if (controller.signal.aborted) return
       setApiTokens(loadedTokens)
       setApiStatus('connected')
       setSelectedToken(loadedTokens[0].symbol)
-      setFromToken(loadedTokens[0].symbol)
-      const receiveToken = loadedTokens.find((item) => item.symbol !== loadedTokens[0].symbol)
-      if (receiveToken) setToToken(receiveToken.symbol)
+      const seededPair = supportedPairs.find((pair) => pair.startsWith(`${loadedTokens[0].symbol}/`))
+      if (seededPair) setTradingPair(seededPair)
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return
       setApiTokens(null)
       setApiStatus('offline')
       setApiError(error instanceof Error ? error.message : 'The token service is unavailable.')
-      setSelectedToken('ETH')
-      setFromToken('ETH')
-      setToToken('USDC')
     })
-
     return () => controller.abort()
   }, [retryTokenLoad])
 
-  const from = tokens.find((item) => item.symbol === fromToken) ?? tokens[0]
-  const to = tokens.find((item) => item.symbol === toToken) ?? tokens.find((item) => item.symbol !== from.symbol) ?? tokens[0]
-  const token = tokens.find((item) => item.symbol === selectedToken) ?? tokens[0]
-  const visibleMarkets = getVisibleMarkets(tokens, marketSearch, marketFilter)
-  const quote = calculateSwapQuote(amount, from, to)
-  const demoOrderBook = getDemoOrderBook(`${from.symbol} / ${to.symbol}`)
-  const tradingPair = `${from.symbol}/${to.symbol}`
-  const orderPairSupported = supportedOrderPairs.has(tradingPair)
-
   useEffect(() => {
-    if (activeTab !== 'orders' || apiStatus !== 'connected') return
+    if (apiStatus !== 'connected') return
     const controller = new AbortController()
     void Promise.resolve().then(() => {
       if (controller.signal.aborted) return undefined
@@ -110,35 +90,28 @@ function App() {
       if (!controller.signal.aborted) setOrdersLoading(false)
     })
     return () => controller.abort()
-  }, [activeTab, apiStatus])
+  }, [apiStatus, ordersRevision])
 
-  const switchTokens = () => {
-    const reversedPair = reverseTokenPair({ fromToken, toToken })
-    setFromToken(reversedPair.fromToken)
-    setToToken(reversedPair.toToken)
-    setAmount('')
-  }
+  useEffect(() => {
+    const updateActiveSection = () => setActiveSection(window.location.hash.slice(1) || 'trade')
+    window.addEventListener('hashchange', updateActiveSection)
+    updateActiveSection()
+    return () => window.removeEventListener('hashchange', updateActiveSection)
+  }, [])
 
-  const maxAmount = () => setAmount(getMaxAmount(from.balance))
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileMenuOpen(false)
+    }
+    window.addEventListener('keydown', handleEscape)
+    return () => window.removeEventListener('keydown', handleEscape)
+  }, [])
 
   const selectToken = (symbol: string) => {
-    const selection = selectMarketToken(symbol, fromToken, toToken, tokens)
+    const selection = selectMarketToken(symbol, baseSymbol, quoteSymbol, tokens)
     setSelectedToken(selection.selectedToken)
-    setFromToken(selection.fromToken)
-    setToToken(selection.toToken)
-  }
-
-  const refreshOrder = async (id: string) => {
-    setRefreshingOrderId(id)
-    setOrdersError('')
-    try {
-      const refreshedOrder = await getOrder(id)
-      setOrders((currentOrders) => currentOrders.map((order) => order.id === id ? refreshedOrder : order))
-    } catch (error) {
-      setOrdersError(error instanceof Error ? error.message : 'Unable to refresh this order.')
-    } finally {
-      setRefreshingOrderId('')
-    }
+    const nextPair = `${selection.fromToken}/${selection.toToken}`
+    if (supportedPairs.includes(nextPair)) setTradingPair(nextPair)
   }
 
   const submitOrder = async (event: FormEvent<HTMLFormElement>) => {
@@ -146,21 +119,21 @@ function App() {
     setOrderError('')
     setOrderSuccess('')
     if (apiStatus !== 'connected') {
-      setOrderError('Connect to the backend before submitting an order.')
+      setOrderError('The token API must be connected before an order can be submitted.')
       return
     }
     if (!orderPairSupported) {
-      setOrderError(`The backend does not support the ${tradingPair} trading pair.`)
+      setOrderError(`The backend does not support ${tradingPair}.`)
       return
     }
     if (!orderUserId.trim()) {
-      setOrderError('Enter a user ID. This value is unverified and is not wallet authentication.')
+      setOrderError('Enter a user ID. This is unverified and is not wallet authentication.')
       return
     }
     const quantity = Number(orderQuantity)
     const price = Number(orderPrice)
     if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0) {
-      setOrderError('Enter a valid positive base quantity and limit price.')
+      setOrderError('Enter a valid positive quantity and limit price.')
       return
     }
     setOrderSubmitting(true)
@@ -175,10 +148,10 @@ function App() {
         quantity,
         status: 'Pending',
       })
-      setOrders((currentOrders) => [savedOrder, ...currentOrders.filter((order) => order.id !== savedOrder.id)])
-      setOrderSuccess(`Order ${savedOrder.id} submitted · status: ${savedOrder.status}.`)
-      setActiveTab('orders')
-      setReviewOpen(false)
+      setOrders((current) => [savedOrder, ...current.filter((item) => item.id !== savedOrder.id)])
+      setOrderSuccess(`Order submitted. Current backend status: ${savedOrder.status}.`)
+      setOrderPanelTab('orders')
+      setOrdersRevision((revision) => revision + 1)
     } catch (error) {
       setOrderError(error instanceof Error ? error.message : 'Order submission failed.')
     } finally {
@@ -186,183 +159,218 @@ function App() {
     }
   }
 
-  return (
-    <main className={`app-shell ${theme === 'dark' ? 'dark' : ''}`}>
-      <div className="announcement"><span className="announcement-dot" /> DexSYS Testnet · API-backed token metadata · Quotes are indicative <span className="announcement-link">Integration status</span></div>
+  const refreshOrder = async (id: string) => {
+    setRefreshingOrderId(id)
+    setOrdersError('')
+    try {
+      const refreshedOrder = await getOrder(id)
+      setOrders((current) => current.map((item) => item.id === id ? refreshedOrder : item))
+    } catch (error) {
+      setOrdersError(error instanceof Error ? error.message : 'Unable to refresh this order.')
+    } finally {
+      setRefreshingOrderId('')
+    }
+  }
 
+  const reloadOrders = () => setOrdersRevision((revision) => revision + 1)
+
+  return (
+    <main className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#trade" aria-label="DexSYS home">
+        <a className="brand" href="#trade" aria-label="DexSYS trade">
           <span className="brand-mark">D</span>
-          <span><strong>DexSYS</strong><small>DECENTRALIZED EXCHANGE</small></span>
+          <span className="brand-name">DexSYS <small>EXCHANGE</small></span>
         </a>
-        <nav className={`nav-links ${mobileMenuOpen ? 'open' : ''}`} id="primary-navigation" aria-label="Primary navigation">
-          <a className="active" href="#trade" onClick={() => setMobileMenuOpen(false)}>Trade</a>
-          <a href="#markets" onClick={() => setMobileMenuOpen(false)}>Markets</a>
-          <a href="#activity" onClick={() => setMobileMenuOpen(false)}>Activity</a>
-          <a href="#protocol" onClick={() => setMobileMenuOpen(false)}>Protocol</a>
+        <nav className={`nav-links ${mobileMenuOpen ? 'mobile-open' : ''}`} id="primary-navigation" aria-label="Primary navigation">
+          {['Trade', 'Markets', 'Activity', 'Protocol'].map((item) => (
+            <a key={item} className={activeSection === item.toLowerCase() ? 'active' : ''} href={`#${item.toLowerCase()}`} onClick={() => setMobileMenuOpen(false)}>{item}</a>
+          ))}
         </nav>
         <div className="top-actions">
-          <button className="icon-button" type="button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>{theme === 'dark' ? '☼' : '◐'}</button>
+          <button className="icon-button theme-button" type="button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}>{theme === 'dark' ? '☼' : '◐'}</button>
           <button className="wallet-button" type="button" disabled title="Wallet integration is not available yet"><span className="status-dot" />Wallet pending</button>
-          <button className="menu-button" type="button" onClick={() => setMobileMenuOpen(!mobileMenuOpen)} aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'} aria-expanded={mobileMenuOpen} aria-controls="primary-navigation">{mobileMenuOpen ? '×' : '☰'}</button>
+          <button className="icon-button menu-button" type="button" onClick={() => setMobileMenuOpen((open) => !open)} aria-label={mobileMenuOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileMenuOpen} aria-controls="primary-navigation">{mobileMenuOpen ? '×' : '☰'}</button>
         </div>
       </header>
 
       <div className={`backend-status ${apiStatus}`} role="status" aria-live="polite">
-        <span className="backend-status-message">{apiStatus === 'loading' ? 'Loading token data · representative demo values shown' : apiStatus === 'connected' ? 'DexSYS token API connected · backend values are currently seeded' : 'Token API unavailable · representative demo data shown'}</span>
+        <span className="status-dot" />
+        <span>{apiStatus === 'loading' ? 'Connecting to token API · demo metadata shown until connected' : apiStatus === 'connected' ? 'Token API connected · backend values are seeded and indicative' : 'Token API unavailable · demo metadata shown'}</span>
         {apiError && <span className="backend-status-error" title={apiError}>{apiError}</span>}
         {apiStatus === 'offline' && <button type="button" onClick={() => { setApiStatus('loading'); setApiError(''); setRetryTokenLoad((attempt) => attempt + 1) }}>Retry</button>}
       </div>
 
-      <section className="hero-copy" id="trade">
-        <div>
-          <p className="eyebrow">DEXSYS TESTNET · EXCHANGE PREVIEW</p>
-          <h1>Markets, without the middleman.</h1>
-          <p className="subtitle">A responsive trading workspace for the DexSYS API. Token metadata is backend-seeded; charts, orders, and quotes remain clearly marked as previews.</p>
-          <div className="hero-actions"><a href="#terminal" className="primary-link">Open trading terminal <span>↗</span></a><a href="#protocol" className="secondary-link">Integration status</a></div>
-        </div>
-        <div className="network-card"><span>NETWORK</span><strong><i /> DexSYS Testnet</strong><small>Wallet and chain connection pending</small></div>
-      </section>
-
-      <section className="ticker-strip" aria-label="Market ticker">
-        {tokens.map((item) => <button key={item.symbol} onClick={() => selectToken(item.symbol)}><span>{item.symbol}</span><strong>{item.price}</strong><em className={changeTone(item.change)}>{item.change}</em></button>)}
-        <div className="ticker-more">MARKET HISTORY <strong>Not connected</strong></div>
-      </section>
-
-      <section className="terminal" id="terminal">
-        <div className="terminal-main">
-          <div className="market-header">
-            <div className="pair-heading"><span className="pair-icon">{token.icon}</span><div><div className="pair-name">{token.symbol}<span>/ {token.symbol === 'USDC' ? 'USD' : 'USDC'}</span></div><small>DexSYS Testnet · indicative market</small></div></div>
-            <div className="price-block"><strong>{token.price}</strong><span className={changeTone(token.change)}>{token.change}</span></div>
-            <div className="market-stats"><span>24h high <b>Not available</b></span><span>24h low <b>Not available</b></span><span>Volume <b>Not provided by API</b></span></div>
+      <div className="page-content">
+        <section className="trade-section" id="trade">
+          <div className="page-heading trade-heading">
+            <div><p className="eyebrow">DEXSYS TESTNET</p><h1>Trade</h1><p className="page-description">Limit-order trading workspace. Token data is seeded; market data and wallet connectivity are unavailable.</p></div>
+            <span className="environment-badge"><i /> TEST ENVIRONMENT</span>
           </div>
 
-          <div className="chart-toolbar">
-            <div className="chart-tabs"><button className="active" type="button">Chart</button><button type="button" disabled title="Depth data is not available">Depth</button><button type="button" onClick={() => document.getElementById('token-information')?.scrollIntoView({ behavior: 'smooth' })}>Info</button></div>
-            <div className="timeframes">{timeframes.map((item) => <button key={item} className={timeframe === item ? 'active' : ''} onClick={() => setTimeframe(item)}>{item}</button>)}</div>
-          </div>
-
-          <div className="chart">
-            <div className="chart-grid"><span>{token.price}</span><span>{token.price}</span><span>{token.price}</span><span>{token.price}</span><span>{token.price}</span></div>
-            <svg viewBox="0 0 644 190" preserveAspectRatio="none" role="img" aria-label="Illustrative chart; historical price data is unavailable">
-              <defs><linearGradient id="area" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopOpacity=".22" /><stop offset="1" stopOpacity="0" /></linearGradient></defs>
-              <polyline className="chart-area" points={`0,190 ${chartPoints} 644,190`} />
-              <polyline className="chart-line" points={chartPoints} />
-            </svg>
-            <div className="chart-cross"><span>{timeframe} · illustrative</span><b>{token.price}</b></div>
-          </div>
-          <p className="panel-footnote chart-disclaimer">Illustrative chart only · market history endpoint pending</p>
-
-          <div className="orderbook">
-            <div className="subhead"><h3>Order book</h3><span>Demo data</span></div>
-            <div className="orderbook-grid">
-              <div>
-                <div className="orderbook-header"><span>Bid</span><span>Size</span></div>
-                {demoOrderBook.bids.map((level) => (
-                  <div className="orderbook-row" key={level.price}>
-                    <strong>{level.price}</strong>
-                    <span>{level.quantity}</span>
-                  </div>
-                ))}
-              </div>
-              <div>
-                <div className="orderbook-header"><span>Ask</span><span>Size</span></div>
-                {demoOrderBook.asks.map((level) => (
-                  <div className="orderbook-row ask" key={level.price}>
-                    <strong>{level.price}</strong>
-                    <span>{level.quantity}</span>
-                  </div>
-                ))}
-              </div>
+          <div className="market-summary">
+            <div className="summary-pair">
+              <span className="token-avatar">{baseToken.icon}</span>
+              <div><strong>{tradingPair}</strong><small>Indicative pair · {orderPairSupported ? 'order entry enabled' : 'unsupported pair'}</small></div>
+              <select value={tradingPair} onChange={(event) => setTradingPair(event.target.value)} aria-label="Trading pair">
+                {supportedPairs.map((pair) => <option key={pair} value={pair}>{pair}</option>)}
+              </select>
             </div>
-            <p className="panel-footnote">Sample order levels only · no live backend data is connected.</p>
+            <div className="summary-stat"><span>Pair price</span><strong>Not provided</strong></div>
+            <div className="summary-stat"><span>24h change</span><strong>Unavailable</strong></div>
+            <div className="summary-stat"><span>24h volume</span><strong>Unavailable</strong></div>
           </div>
-        </div>
 
-        <aside className="trade-panel">
-          <div className="panel-tabs"><button className={activeTab === 'swap' ? 'active' : ''} onClick={() => setActiveTab('swap')}>Swap</button><button className={activeTab === 'orders' ? 'active' : ''} onClick={() => setActiveTab('orders')}>Orders</button></div>
-          {activeTab === 'swap' ? <div className="swap-panel">
-            <div className="panel-title"><div><h2>Swap preview</h2><p>Frontend quote · not an order.</p></div><span>Indicative</span></div>
-            <TokenInput label="You pay" token={from} amount={amount} tokens={tokens} balanceLabel={apiStatus === 'connected' ? 'API seed' : 'Demo / seed'} onAmountChange={setAmount} onTokenChange={selectToken} onMax={maxAmount} disabledToken={to.symbol} />
-            <button className="switch-button" aria-label="Switch tokens" onClick={switchTokens}>↕</button>
-            <TokenInput label="You receive" token={to} amount={quote} tokens={tokens} balanceLabel={apiStatus === 'connected' ? 'API seed' : 'Demo / seed'} onAmountChange={() => undefined} onTokenChange={setToToken} disabledToken={from.symbol} readOnly />
-            <div className="quote-details"><span>Indicative rate</span><strong>1 {from.symbol} ≈ {calculateSwapQuote('1', from, to)} {to.symbol}</strong><span>Price impact</span><strong>Unavailable</strong><span>Network fee</span><strong>Not connected</strong></div>
-            <button className="primary-action" disabled={!amount || Number(amount) <= 0} onClick={() => { setOrderError(''); setOrderSuccess(''); setReviewOpen(true) }}>{!amount ? 'Enter an amount' : 'Review quote preview'}</button>
-            <p className="panel-footnote">Local estimate only · no order or transaction is submitted</p>
-          </div> : <div className="orders-panel">
-            <div className="panel-title"><div><h2>Backend orders</h2><p>Persisted API order history · limit orders only.</p></div></div>
-            {orderSuccess && <p className="order-feedback order-success" role="status">{orderSuccess}</p>}
-            {apiStatus !== 'connected' && <p className="order-feedback order-error">Connect to the backend to load persisted orders. Demo rows are not shown as live history.</p>}
-            {ordersLoading && <p className="order-feedback" role="status">Loading orders…</p>}
-            {ordersError && <p className="order-feedback order-error" role="alert">{ordersError}</p>}
-            {apiStatus === 'connected' && !ordersLoading && !ordersError && orders.length === 0 && <p className="order-feedback">No persisted orders yet.</p>}
-            {orders.map((order) => <div className="order-row" key={order.id}>
-              <div><strong>{order.trading_pair}</strong><span>{order.side} · {order.quantity} · {order.order_type}</span></div>
-              <div className="order-price"><strong>{order.price ?? 'Market'}</strong><span>{order.status}</span><button className="order-refresh" disabled={refreshingOrderId === order.id} onClick={() => void refreshOrder(order.id)}>{refreshingOrderId === order.id ? 'Refreshing…' : 'Refresh'}</button></div>
-            </div>)}
+          <div className="terminal-grid">
+            <section className="panel chart-panel" aria-label="Market chart and order book">
+              <div className="chart-toolbar">
+                <div className="chart-tabs" role="tablist" aria-label="Market data view">
+                  {(['chart', 'depth', 'info'] as const).map((tab) => <button key={tab} type="button" role="tab" aria-selected={chartTab === tab} className={chartTab === tab ? 'selected' : ''} disabled={tab === 'depth'} title={tab === 'depth' ? 'Live order-book depth is not available' : undefined} onClick={() => setChartTab(tab)}>{tab[0].toUpperCase() + tab.slice(1)}</button>)}
+                </div>
+                <div className="timeframes" aria-label="Historical intervals unavailable">{['5m', '15m', '1h', '4h', '1d'].map((interval) => <button key={interval} type="button" disabled title="Historical price data is not available">{interval}</button>)}</div>
+              </div>
+              {chartTab === 'chart' && <div className="chart-empty" role="img" aria-label="Historical market chart unavailable">
+                <span className="chart-icon" aria-hidden="true">⌁</span>
+                <strong>Market history unavailable</strong>
+                <p>DexSYS has no historical price feed connected. No chart values are simulated.</p>
+              </div>}
+              {chartTab === 'info' && <div className="chart-info">
+                <span className="eyebrow">PAIR INFORMATION</span>
+                <h2>{tradingPair}</h2>
+                <p>Trading pair is enabled in the seeded backend registry. Pair-level prices, volume and liquidity are not returned by the API.</p>
+                <div><span>Matching</span><strong>In-memory limit-order engine</strong></div>
+                <div><span>Settlement</span><strong>Not connected to chain</strong></div>
+              </div>}
+              <div className="chart-footnote"><span>MARKET DATA</span><span>Not connected</span></div>
+              <div className="orderbook">
+                <div className="panel-heading compact"><div><h2>Order book</h2><p>Live depth feed unavailable</p></div><span className="data-badge">NO LIVE DATA</span></div>
+                <div className="orderbook-head"><span>PRICE</span><span>SIZE</span><span>TOTAL</span></div>
+                <div className="orderbook-empty">Order-book levels are not provided by the API.</div>
+              </div>
+            </section>
+
+            <aside className="panel trade-panel">
+              <div className="panel-tabs" role="tablist" aria-label="Order panel">
+                <button type="button" role="tab" aria-selected={orderPanelTab === 'entry'} className={orderPanelTab === 'entry' ? 'selected' : ''} onClick={() => setOrderPanelTab('entry')}>Order entry</button>
+                <button type="button" role="tab" aria-selected={orderPanelTab === 'orders'} className={orderPanelTab === 'orders' ? 'selected' : ''} onClick={() => setOrderPanelTab('orders')}>Open orders <span>{openOrders.length}</span></button>
+              </div>
+              {orderPanelTab === 'entry' ? <form className="order-form" onSubmit={(event) => void submitOrder(event)}>
+                <div className="order-title"><div><h2>Place limit order</h2><p>{tradingPair}</p></div><span className="data-badge">LIMIT ONLY</span></div>
+                <div className="side-selector" role="group" aria-label="Order side">
+                  <button type="button" className={orderSide === 'Buy' ? 'buy selected' : 'buy'} onClick={() => setOrderSide('Buy')}>Buy / Long</button>
+                  <button type="button" className={orderSide === 'Sell' ? 'sell selected' : 'sell'} onClick={() => setOrderSide('Sell')}>Sell</button>
+                </div>
+                <label className="field-label">Limit price <span>{quoteSymbol} per {baseSymbol}</span>
+                  <div className="field-control"><input required type="number" min="0" step="any" placeholder="0.00" value={orderPrice} onChange={(event) => setOrderPrice(event.target.value)} /><span>{quoteSymbol}</span></div>
+                </label>
+                <label className="field-label">Quantity <span>Base amount</span>
+                  <div className="field-control"><input required type="number" min="0" step="any" placeholder="0.00" value={orderQuantity} onChange={(event) => setOrderQuantity(event.target.value)} /><span>{baseSymbol}</span></div>
+                </label>
+                <label className="field-label">User ID <span className="unverified-label">Unverified identifier</span>
+                  <input className="text-control" required autoComplete="off" placeholder="Enter an identifier" value={orderUserId} onChange={(event) => setOrderUserId(event.target.value)} />
+                </label>
+                <div className="order-warning">This is not wallet authentication. No signature, balance check, or settlement is performed.</div>
+                {apiStatus !== 'connected' && <p className="feedback error" role="alert">Order entry is unavailable until the backend token API connects.</p>}
+                {!orderPairSupported && <p className="feedback error" role="alert">This pair is not supported by the order API.</p>}
+                {orderError && <p className="feedback error" role="alert">{orderError}</p>}
+                {orderSuccess && <p className="feedback success" role="status">{orderSuccess}</p>}
+                <button className={`submit-order ${orderSide === 'Sell' ? 'sell-action' : ''}`} type="submit" disabled={orderSubmitting || apiStatus !== 'connected' || !orderPairSupported}>{orderSubmitting ? 'Submitting order…' : `${orderSide} ${tradingPair}`}</button>
+                <p className="form-footnote">Market orders are unsupported. API response is authoritative for order status.</p>
+              </form> : <div className="open-orders-panel">
+                <div className="panel-heading compact"><div><h2>Open orders</h2><p>Persisted backend records</p></div><button className="text-button" type="button" onClick={reloadOrders} disabled={ordersLoading}>Refresh</button></div>
+                {ordersLoading && <p className="empty-state" role="status">Loading persisted orders…</p>}
+                {ordersError && <p className="feedback error" role="alert">{ordersError}</p>}
+                {!ordersLoading && !ordersError && apiStatus === 'connected' && openOrders.length === 0 && <p className="empty-state">No open orders.</p>}
+                {!ordersLoading && openOrders.slice(0, 8).map((order) => <OrderRow key={order.id} order={order} onRefresh={refreshOrder} refreshing={refreshingOrderId === order.id} compact />)}
+                {apiStatus !== 'connected' && <p className="empty-state">Backend order history requires an API connection.</p>}
+                <a className="all-orders-link" href="#activity" onClick={() => setActiveSection('activity')}>View all activity <span>→</span></a>
+              </div>}
+            </aside>
+          </div>
+        </section>
+
+        <section className="content-section" id="markets">
+          <SectionHeading eyebrow="MARKETS" title="Token markets" description="Backend-seeded token prices and metadata. Pair-level market data is not available." />
+          <div className="market-controls">
+            <label className="search-control"><span aria-hidden="true">⌕</span><input value={marketSearch} onChange={(event) => setMarketSearch(event.target.value)} placeholder="Search tokens" aria-label="Search tokens" /></label>
+            <div className="filter-control" role="group" aria-label="Market sort">
+              <button type="button" className={marketFilter === 'all' ? 'selected' : ''} onClick={() => setMarketFilter('all')}>All assets</button>
+              <button type="button" className={marketFilter === 'movers' ? 'selected' : ''} onClick={() => setMarketFilter('movers')}>Largest moves</button>
+            </div>
+          </div>
+          <div className="table-scroll">
+            <div className="data-table market-table">
+              <div className="table-header market-columns"><span>ASSET / PAIRS</span><span>INDICATIVE PRICE</span><span>24H CHANGE</span><span>VOLUME</span><span /></div>
+              {visibleMarkets.map((item) => <button className="table-row market-columns" key={item.symbol} type="button" onClick={() => selectToken(item.symbol)}>
+                <span className="asset-cell"><i className="token-avatar">{item.icon}</i><span><strong>{item.name}</strong><small>{item.symbol} · {item.pairs.join(', ') || 'No supported pairs returned'}</small></span></span>
+                <strong>{item.price}</strong><span className={changeTone(item.change)}>{item.change}</span><span className="muted">Not provided</span><span className="trade-link">Select <b>→</b></span>
+              </button>)}
+              {visibleMarkets.length === 0 && <p className="empty-state">No assets match that search.</p>}
+            </div>
+          </div>
+          <p className="section-footnote">Prices, change and balances are seeded backend metadata; they are not a live market feed. Volume is not returned by the API.</p>
+        </section>
+
+        <section className="content-section" id="activity">
+          <SectionHeading eyebrow="ACCOUNT ACTIVITY" title="Order history" description="Persisted order records returned by the DexSYS API. No sample trades are shown as user activity." />
+          <div className="activity-toolbar">
+            <div className="filter-control" role="tablist" aria-label="Filter order status">
+              {activityFilters.map((filter) => <button type="button" role="tab" aria-selected={activityFilter === filter} className={activityFilter === filter ? 'selected' : ''} key={filter} onClick={() => setActivityFilter(filter)}>{filter}</button>)}
+            </div>
+            <div className="activity-source"><span className={`source-dot ${apiStatus === 'connected' ? 'active' : ''}`} />{apiStatus === 'connected' ? 'LIVE API RECORDS' : 'API UNAVAILABLE'}<button className="text-button" type="button" disabled={apiStatus !== 'connected' || ordersLoading} onClick={reloadOrders}>{ordersLoading ? 'Loading…' : 'Refresh'}</button></div>
+          </div>
+          {ordersError && <p className="feedback error" role="alert">{ordersError}</p>}
+          {apiStatus !== 'connected' && <div className="state-panel"><strong>Order history unavailable</strong><p>Connect to the backend to read persisted orders. Demo trades are intentionally excluded.</p></div>}
+          {apiStatus === 'connected' && ordersLoading && <div className="state-panel" role="status"><strong>Loading order history</strong><p>Fetching persisted orders from the DexSYS API…</p></div>}
+          {apiStatus === 'connected' && !ordersLoading && !ordersError && activityOrders.length === 0 && <div className="state-panel"><strong>No {activityFilter === 'All' ? '' : activityFilter.toLowerCase() + ' '}orders found</strong><p>Orders accepted by the backend will appear here.</p></div>}
+          {apiStatus === 'connected' && !ordersLoading && activityOrders.length > 0 && <div className="table-scroll">
+            <div className="data-table activity-table">
+              <div className="table-header activity-columns"><span>TIME</span><span>TRADING PAIR</span><span>SIDE</span><span>TYPE</span><span>PRICE</span><span>QUANTITY</span><span>FILLED</span><span>STATUS</span><span /></div>
+              {activityOrders.map((order) => <div className="table-row activity-columns" key={order.id}>
+                <span className="muted">Unavailable</span><strong>{order.trading_pair}</strong><span className={order.side === 'Buy' ? 'positive' : 'negative'}>{order.side}</span><span>{order.order_type}</span><span>{order.price ?? '—'}</span><span>{order.quantity}</span><span className="muted">Unavailable</span><StatusBadge status={order.status} /><button className="text-button row-refresh" type="button" onClick={() => void refreshOrder(order.id)} disabled={refreshingOrderId === order.id}>{refreshingOrderId === order.id ? 'Refreshing…' : 'Refresh'}</button>
+              </div>)}
+            </div>
           </div>}
-        </aside>
-      </section>
+          <p className="section-footnote">The current order API does not return creation time, remaining quantity or executed quantity; these fields are shown as unavailable rather than inferred.</p>
+        </section>
 
-      <section className="markets-section" id="markets">
-        <div className="section-heading"><div><p className="eyebrow">MARKETS</p><h2>Explore assets</h2></div><div className="market-tools"><input value={marketSearch} onChange={(event) => setMarketSearch(event.target.value)} placeholder="Search assets" aria-label="Search assets" /><button className={marketFilter === 'all' ? 'filter-active' : ''} onClick={() => setMarketFilter('all')}>All</button><button className={marketFilter === 'movers' ? 'filter-active' : ''} onClick={() => setMarketFilter('movers')}>Top movers</button></div></div>
-        <div className="market-table">
-          <div className="market-head"><span>Asset</span><span>Price</span><span>24h change</span><span>24h volume</span><span>Action</span></div>
-          {visibleMarkets.map((item) => <button className={`market-table-row ${item.symbol === selectedToken ? 'selected-market' : ''}`} key={item.symbol} onClick={() => selectToken(item.symbol)}><span className="asset-cell"><i>{item.icon}</i><b>{item.name}</b><small>{item.symbol}</small></span><strong>{item.price}</strong><span className={changeTone(item.change)}>{item.change}</span><span>Not provided</span><span className="trade-arrow">Trade ↗</span></button>)}
-          {visibleMarkets.length === 0 && <div className="empty-state">No supported assets match your search.</div>}
-        </div>
-        <p className="panel-footnote">API prices and seed balances are indicative; wallet balances and market volume are not connected.</p>
-      </section>
-
-      <section className="protocol-section" id="protocol">
-        <div><p className="eyebrow">BUILT FOR TRANSPARENCY</p><h2>Trading infrastructure,<br /><span>without the black box.</span></h2></div>
-        <div className="protocol-grid">
-          <article><span>01</span><h3>Integration boundary</h3><p>The frontend does not custody assets or connect a wallet yet.</p></article>
-          <article><span>02</span><h3>Visible data status</h3><p>Token metadata comes from the Rust API; chart history and orderbook data are unavailable.</p></article>
-          <article><span>03</span><h3>Composable services</h3><p>Typed frontend services prepare the interface for backend contracts as they are implemented.</p></article>
-        </div>
-      </section>
-
-      <section className="activity-section" id="activity">
-        <div className="section-heading"><div><p className="eyebrow">ACTIVITY</p><h2>Sample trade history</h2></div></div>
-        <p className="panel-footnote">Representative demo data only · not loaded from the order API</p>
-        <div className="activity-table"><div className="table-head"><span>Time</span><span>Pair</span><span>Side</span><span>Amount</span><span>Price</span><span>Status</span></div>{DEMO_RECENT_TRADES.map((trade, index) => <div className="table-row" key={`${index}-${trade.pair}`}><span>Demo</span><strong>{trade.pair}</strong><span>{trade.side}</span><span>{trade.amount}</span><span>{trade.price}</span><span className={trade.status === 'Filled' ? 'positive' : ''}>{trade.status}</span></div>)}</div>
-      </section>
-
-      <section className="token-section" id="token-information" aria-labelledby="token-information-title">
-        <div className="section-heading"><div><p className="eyebrow">ASSET REGISTRY</p><h2 id="token-information-title">Token information</h2></div><span className="validation-badge">{token.validation}</span></div>
-        <div className="token-detail-grid">
-          <div className="token-identity"><div className="large-token-icon">{token.icon}</div><div><h3>{token.name}</h3><p>{token.symbol} · Testnet asset</p></div></div>
-          <div className="token-stat"><span>Indicative price</span><strong>{token.price}</strong><small className={changeTone(token.change)}>{token.change} 24h</small></div>
-          <div className="token-stat"><span>Wallet balance</span><strong>—</strong><small>Wallet integration pending</small></div>
-          <div className="token-address"><span>Contract / identifier</span><code>{token.address}</code><small>Backend-seeded identifier</small></div>
-        </div>
-        <div className="token-bottom"><div><span className="detail-label">Supported pairs</span><div className="pair-list">{token.pairs.map((pair) => <button key={pair} onClick={() => selectToken(pair.split(' / ')[0])}>{pair}</button>)}</div></div><div className="validation-note"><strong>Validation note</strong><p>{token.note}</p></div></div>
-      </section>
-
-      <footer id="footer"><div><strong>DexSYS</strong><span>Decentralized exchange infrastructure</span></div><div><span>Testnet environment</span><span>Token values are seeded and indicative</span></div></footer>
-
-      {reviewOpen && <div className="modal-backdrop" role="presentation" onClick={() => { if (!orderSubmitting) setReviewOpen(false) }}><section className="review-modal" role="dialog" aria-modal="true" aria-labelledby="review-title" onClick={(event) => event.stopPropagation()}><button className="modal-close" aria-label="Close review" autoFocus disabled={orderSubmitting} onClick={() => setReviewOpen(false)}>×</button><p className="eyebrow">ORDER REQUEST</p><h2 id="review-title">Submit a limit order</h2><p className="modal-copy">The quote below is illustrative. Order details are entered separately and submitted to the backend.</p><div className="review-route"><div><span>Preview only</span><strong>{amount || '0'} {from.symbol} → {quote} {to.symbol}</strong></div></div>
-        <form className="order-form" onSubmit={(event) => void submitOrder(event)}>
-          <div className="order-form-heading"><strong>Limit order</strong><span>Market orders unsupported</span></div>
-          <div className="order-side-control" role="group" aria-label="Order side">
-            <button type="button" className={orderSide === 'Buy' ? 'selected' : ''} onClick={() => setOrderSide('Buy')}>Buy</button>
-            <button type="button" className={orderSide === 'Sell' ? 'selected' : ''} onClick={() => setOrderSide('Sell')}>Sell</button>
+        <section className="content-section protocol-section" id="protocol">
+          <SectionHeading eyebrow="PROTOCOL" title="DexSYS registry" description="Available token metadata and integration boundaries reported by the current backend." />
+          <div className="protocol-grid">
+            {tokens.map((item) => <article className="protocol-token" key={item.symbol}>
+              <div className="protocol-token-heading"><i className="token-avatar">{item.icon}</i><div><h3>{item.name}</h3><span>{item.symbol}</span></div><span className={`status-badge validation ${item.validation === 'Validated' ? 'valid' : 'unvalidated'}`}>{item.validation}</span></div>
+              <div className="protocol-fields"><span>Indicative price</span><strong>{item.price}</strong><span>24h change</span><strong className={changeTone(item.change)}>{item.change}</strong><span>Seed balance</span><strong>{item.balance.toLocaleString()} {item.symbol} <small>· not a wallet balance</small></strong><span>Contract / identifier</span><code>{item.address || 'Not provided'}</code></div>
+              <div className="protocol-pairs"><span>Supported pairs</span><div>{item.pairs.length ? item.pairs.map((pair) => <span className="pair-badge" key={pair}>{pair}</span>) : <span className="muted">Not provided</span>}</div></div>
+              <p className="section-footnote">{item.note}</p>
+            </article>)}
           </div>
-          <label>User ID <span>(unverified; no wallet/auth connected)</span><input required value={orderUserId} onChange={(event) => setOrderUserId(event.target.value)} autoComplete="off" /></label>
-          <label>Trading pair<input readOnly value={tradingPair} /></label>
-          <label>Base quantity ({from.symbol})<input required type="number" min="0" step="any" value={orderQuantity} onChange={(event) => setOrderQuantity(event.target.value)} /></label>
-          <label>Limit price ({to.symbol} per {from.symbol})<input required type="number" min="0" step="any" value={orderPrice} onChange={(event) => setOrderPrice(event.target.value)} /></label>
-          {!orderPairSupported && <p className="order-feedback order-error">The backend currently supports ETH/BTC and BTC/ETH only. Change the preview pair to submit.</p>}
-          {apiStatus !== 'connected' && <p className="order-feedback order-error">Backend unavailable. Order submission is disabled until API token metadata loads.</p>}
-          {orderError && <p className="order-feedback order-error" role="alert">{orderError}</p>}
-          {orderSuccess && <p className="order-feedback order-success" role="status">{orderSuccess}</p>}
-          <button className="primary-action" type="submit" disabled={orderSubmitting || apiStatus !== 'connected' || !orderPairSupported}>{orderSubmitting ? 'Submitting…' : 'Submit limit order'}</button>
-          <p className="panel-footnote">No wallet signature is requested. Settlement and blockchain confirmation are not provided.</p>
-        </form>
-      </section></div>}
+          <div className="protocol-boundaries">
+            <div><span>Order matching</span><strong>In-memory engine</strong><small>Orders are persisted through the API; PostgreSQL is not the live orderbook.</small></div>
+            <div><span>Wallet</span><strong>Not connected</strong><small>No wallet identity, signatures or balances are verified.</small></div>
+            <div><span>Settlement</span><strong>Not connected</strong><small>Database status is not proof of on-chain confirmation.</small></div>
+          </div>
+        </section>
+
+        <footer className="site-footer"><a className="brand" href="#trade"><span className="brand-mark">D</span><span className="brand-name">DexSYS <small>EXCHANGE</small></span></a><span>Test environment · seeded data · no wallet connected</span></footer>
+      </div>
     </main>
   )
+}
+
+function SectionHeading({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {
+  return <div className="section-heading"><div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2><p>{description}</p></div></div>
+}
+
+function OrderRow({ order, onRefresh, refreshing, compact = false }: { order: Order; onRefresh: (id: string) => void; refreshing: boolean; compact?: boolean }) {
+  return <div className={`open-order-row ${compact ? 'compact' : ''}`}>
+    <div><strong>{order.trading_pair}</strong><span className={order.side === 'Buy' ? 'positive' : 'negative'}>{order.side} · {order.quantity} {order.order_type}</span></div>
+    <div><strong>{order.price ?? '—'}</strong><StatusBadge status={order.status} /></div>
+    <button className="text-button" type="button" onClick={() => onRefresh(order.id)} disabled={refreshing}>{refreshing ? 'Refreshing…' : 'Refresh'}</button>
+  </div>
+}
+
+function StatusBadge({ status }: { status: Order['status'] | 'Pending' }) {
+  const tone = status === 'Filled' ? 'filled' : status === 'Cancelled' ? 'cancelled' : 'open'
+  return <span className={`status-badge ${tone}`}>{status}</span>
 }
 
 export default App

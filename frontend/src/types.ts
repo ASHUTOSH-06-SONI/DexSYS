@@ -12,11 +12,3 @@ export type Token = {
   validation: ValidationState
   note: string
 }
-
-export type RecentTrade = {
-  pair: string
-  side: 'Buy' | 'Sell'
-  amount: string
-  price: string
-  status: 'Filled' | 'Pending'
-}

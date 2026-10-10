@@ -5,7 +5,7 @@ const THEME_STORAGE_KEY = 'dexsys-theme'
 type ThemeStorage = Pick<Storage, 'getItem' | 'setItem'>
 
 export function loadThemePreference(storage: ThemeStorage): ThemeMode {
-  return storage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light'
+  return storage.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark'
 }
 
 export function saveThemePreference(storage: ThemeStorage, theme: ThemeMode) {

@@ -185,20 +185,22 @@ http://127.0.0.1:8080
 
 ## Frontend
 
-The frontend is a React + TypeScript application created with Vite. It provides a DEX trading UI shell designed around an exchange workflow: market search, swap preview, token detail panel, and order activity.
+The frontend is a React + TypeScript application created with Vite. It provides a responsive DEX trading terminal, supported-pair limit-order entry, backend order history, token markets, and protocol metadata.
 
 ### Frontend features
 
 - Responsive trading layout
 - Dark/light theme persisted with `localStorage`
-- Token list and market selection logic
-- Swap preview with local quote calculation (preview only; does not submit an order)
+- Dark-first trading terminal with a persistent optional light theme
+- Token search and market selection
+- Explicit unavailable states for chart history, depth, volume, and pair pricing
 - API-driven token info loading from the backend
 - Limit-order submission to `POST /orders` and persisted order history from `GET /orders`
 - Individual persisted-order refresh through `GET /orders/{id}`
+- Activity filters for all, open, filled, and cancelled API orders
 - Market-order submission is explicitly unsupported by the current backend
 - Order `user_id` is manually entered and unverified; there is no wallet connection or authentication
-- Graceful fallback to representative demo data when API requests fail
+- Clearly labelled fallback token metadata when API requests fail; sample trades and fabricated chart/orderbook data are not presented
 - Explicit connection status messages for backend availability
 
 ### Frontend architecture
@@ -206,13 +208,11 @@ The frontend is a React + TypeScript application created with Vite. It provides 
 The main frontend files are:
 
 - `frontend/src/App.tsx` — main trading interface and state management
-- `frontend/src/components/TokenInput.tsx` — interactive token selection amount input
 - `frontend/src/services/apiClient.ts` — Fetch wrapper with validation and error handling
 - `frontend/src/services/orderService.ts` — backend order DTO validation and create/list/get calls
 - `frontend/src/services/tokenService.ts` — Maps backend token data into frontend token view models
-- `frontend/src/data/demoData.ts` — Demo market and activity data
-- `frontend/src/domain/swapQuote.ts` — Local indicative quote calculation
-- `frontend/src/types.ts` — Shared TypeScript DTOs for tokens and recent trades
+- `frontend/src/data/demoData.ts` — representative fallback token metadata only
+- `frontend/src/types.ts` — frontend token view types
 
 ### Frontend environment and proxy
 
@@ -229,9 +229,9 @@ DEXSYS_API_PROXY_TARGET=http://127.0.0.1:8080
 ```
 
 The example config is in `frontend/.env.example`.
-In the trading panel's order review, submit a limit order using the supported `ETH/BTC` or `BTC/ETH` pair. Enter a base quantity, a limit price in quote-token units per base token, and a required user ID. That ID is an unverified caller-provided label only—not a wallet address, signature, authenticated identity, or proof of ownership. Market orders are not submitted. The backend order response and refreshed order list are displayed after submission; if the history request fails, the submitted response remains visible alongside the refresh error.
+In the trading panel, submit a limit order using the supported `ETH/BTC` or `BTC/ETH` pair. Enter a base quantity, a limit price in quote-token units per base token, and a required user ID. That ID is an unverified caller-provided label only—not a wallet address, signature, authenticated identity, or proof of ownership. Market orders are not submitted. The backend order response is shown after submission and the persisted order list is refreshed.
 
-Swap quotes, chart history, sample orderbook levels, balances, and sample trade activity remain preview/demo data and are not sources for submitted order values. Order submission does not create a blockchain transaction or settlement confirmation.
+Token prices and balances are seeded metadata, not live market prices or wallet holdings. Pair quotes, chart history, orderbook depth, volume, creation timestamps, and filled quantities are not available from the current API and are shown as unavailable. Order submission does not create a blockchain transaction or settlement confirmation.
 
 ### Frontend run instructions
 

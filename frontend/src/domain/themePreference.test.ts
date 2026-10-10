@@ -10,16 +10,16 @@ function createStorage() {
 }
 
 describe('theme preference', () => {
-  it('defaults to light and restores a saved dark preference', () => {
+  it('defaults to dark and restores a saved light preference', () => {
     const storage = createStorage()
-    expect(loadThemePreference(storage)).toBe('light')
-    saveThemePreference(storage, 'dark')
     expect(loadThemePreference(storage)).toBe('dark')
+    saveThemePreference(storage, 'light')
+    expect(loadThemePreference(storage)).toBe('light')
   })
 
-  it('falls back to light for invalid saved values', () => {
+  it('falls back to dark for invalid saved values', () => {
     const storage = createStorage()
     storage.setItem('dexsys-theme', 'sepia')
-    expect(loadThemePreference(storage)).toBe('light')
+    expect(loadThemePreference(storage)).toBe('dark')
   })
 })
