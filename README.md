@@ -1,6 +1,6 @@
 # DexSYS
 
-DexSYS is a decentralized exchange (DEX) prototype built as a full-stack project with a Rust API backend, a React + TypeScript trading interface, and a Solidity/Hardhat contract workspace. The project currently focuses on a testnet-ready exchange preview: seeded token metadata is exposed via the backend, the frontend presents a responsive trading UI, and the core DEX engine components are scaffolded for future exchange execution.
+DexSYS is a decentralized exchange (DEX) prototype built as a full-stack project with a Rust API backend, a React + TypeScript trading interface, and a Solidity/Hardhat contract workspace. The backend persists and matches submitted limit orders in its in-memory engine, while the frontend provides API-backed order entry and history alongside clearly labelled preview data.
 
 ## Project status
 
@@ -10,16 +10,15 @@ Current implementation highlights:
 - SQLx migrations and PostgreSQL repositories for tokens, trading pairs, orders, trades, settlements, and audit events
 - React/Vite frontend that renders a token swap workspace, price cards, and activity views
 - Seeded token data for ETH and BTC with fallback demo values when the API is unavailable
-- Orderbook and matching-engine crates in Rust as a foundation for future execution logic
+- Orderbook and matching-engine crates in Rust process API-submitted orders in memory
 - Solidity contract workspace prepared for a future settlement layer
 
 Current gaps:
 
 - No wallet connection or authentication
-- No live blockchain settlement or order execution
+- No blockchain settlement or on-chain confirmation flow
 - No real market data feed, orderbook feed, or WebSocket stream
 - No production-grade auth/user flows
-- Orderbook/matching logic remains partially scaffolded and not yet wired into the API
 
 ## Architecture overview
 
@@ -193,8 +192,12 @@ The frontend is a React + TypeScript application created with Vite. It provides 
 - Responsive trading layout
 - Dark/light theme persisted with `localStorage`
 - Token list and market selection logic
-- Swap preview with local quote calculation
+- Swap preview with local quote calculation (preview only; does not submit an order)
 - API-driven token info loading from the backend
+- Limit-order submission to `POST /orders` and persisted order history from `GET /orders`
+- Individual persisted-order refresh through `GET /orders/{id}`
+- Market-order submission is explicitly unsupported by the current backend
+- Order `user_id` is manually entered and unverified; there is no wallet connection or authentication
 - Graceful fallback to representative demo data when API requests fail
 - Explicit connection status messages for backend availability
 
@@ -205,6 +208,7 @@ The main frontend files are:
 - `frontend/src/App.tsx` — main trading interface and state management
 - `frontend/src/components/TokenInput.tsx` — interactive token selection amount input
 - `frontend/src/services/apiClient.ts` — Fetch wrapper with validation and error handling
+- `frontend/src/services/orderService.ts` — backend order DTO validation and create/list/get calls
 - `frontend/src/services/tokenService.ts` — Maps backend token data into frontend token view models
 - `frontend/src/data/demoData.ts` — Demo market and activity data
 - `frontend/src/domain/swapQuote.ts` — Local indicative quote calculation
@@ -225,6 +229,9 @@ DEXSYS_API_PROXY_TARGET=http://127.0.0.1:8080
 ```
 
 The example config is in `frontend/.env.example`.
+In the trading panel's order review, submit a limit order using the supported `ETH/BTC` or `BTC/ETH` pair. Enter a base quantity, a limit price in quote-token units per base token, and a required user ID. That ID is an unverified caller-provided label only—not a wallet address, signature, authenticated identity, or proof of ownership. Market orders are not submitted. The backend order response and refreshed order list are displayed after submission; if the history request fails, the submitted response remains visible alongside the refresh error.
+
+Swap quotes, chart history, sample orderbook levels, balances, and sample trade activity remain preview/demo data and are not sources for submitted order values. Order submission does not create a blockchain transaction or settlement confirmation.
 
 ### Frontend run instructions
 
@@ -271,8 +278,8 @@ npx hardhat test
 The repository is best understood as an exchange prototype with the following boundaries:
 
 - The backend exposes token and order endpoints, but not a real market or liquidity engine
-- The frontend renders an exchange interface, but it does not submit transactions or connect a wallet
-- The orderbook and matching-engine crates are foundational, but not fully integrated into the API
+- The frontend submits limit orders to the API and reads persisted order history, but does not submit blockchain transactions or connect a wallet
+- Order execution uses the in-memory matching engine behind the API; PostgreSQL stores orders and actual engine-produced trades
 - The smart contract project is ready for future settlement work, but not yet connected to real user flows
 
 ## Recommended local development flow
