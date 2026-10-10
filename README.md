@@ -6,7 +6,8 @@ DexSYS is a decentralized exchange (DEX) prototype built as a full-stack project
 
 Current implementation highlights:
 
-- Rust Axum backend serving health, token metadata, and in-memory order endpoints
+- Rust Axum backend serving health, PostgreSQL-backed token metadata, and order endpoints
+- SQLx migrations and PostgreSQL repositories for tokens, trading pairs, orders, trades, settlements, and audit events
 - React/Vite frontend that renders a token swap workspace, price cards, and activity views
 - Seeded token data for ETH and BTC with fallback demo values when the API is unavailable
 - Orderbook and matching-engine crates in Rust as a foundation for future execution logic
@@ -17,7 +18,7 @@ Current gaps:
 - No wallet connection or authentication
 - No live blockchain settlement or order execution
 - No real market data feed, orderbook feed, or WebSocket stream
-- No persisted database layer or production-grade auth/user flows
+- No production-grade auth/user flows
 - Orderbook/matching logic remains partially scaffolded and not yet wired into the API
 
 ## Architecture overview
@@ -36,6 +37,7 @@ Backend:
 - Rust
 - Axum web framework
 - Tokio async runtime
+- PostgreSQL with SQLx
 - Serde for JSON serialization
 - Cargo workspace with multiple crates
 
@@ -102,15 +104,17 @@ The backend lives in `backend/` as a Cargo workspace. The workspace includes:
 
 ### Backend architecture
 
-The API is written with Axum and exposes an in-memory application state. The server currently binds to `127.0.0.1:8080` and provides a simple stateful service for demo data.
+The API is written with Axum and shares a SQLx PostgreSQL pool through its application state. The server currently binds to `127.0.0.1:8080`.
 
 Core backend components:
 
-- `AppState` stores seeded tokens and in-memory orders in `RwLock<HashMap<...>>`
+- `AppState` shares the PostgreSQL pool used by token and order repositories
+- SQLx migrations apply automatically during API startup; demo ETH/BTC token and pair rows are inserted only when absent
 - `/health` and `/` return API service health information
-- `/tokens/{symbol}` returns token metadata for ETH and BTC
+- `/tokens/{symbol}` returns persistent token metadata for ETH and BTC
 - `/orders` supports list/create operations
 - `/orders/{id}` supports get/cancel operations
+- The orderbook and matching engine remain in memory and are not queried by persistence operations
 
 ### Current backend data model
 
@@ -135,7 +139,7 @@ Order payload shape:
 {
   "id": "order-123",
   "user_id": "alice",
-  "trading_pair": "ETH/USDC",
+  "trading_pair": "ETH/BTC",
   "side": "Buy",
   "order_type": "Limit",
   "price": 3500.0,
@@ -151,29 +155,24 @@ Order payload shape:
 | GET | `/` | Health endpoint |
 | GET | `/health` | Health endpoint |
 | GET | `/tokens/{symbol}` | Fetch token metadata |
-| GET | `/orders` | List in-memory orders |
+| GET | `/orders` | List persisted orders |
 | POST | `/orders` | Create order |
 | GET | `/orders/{id}` | Fetch one order |
 | DELETE | `/orders/{id}` | Cancel order |
 
 ### Backend behavior
 
-The current backend behaves like a lightweight exchange prototype:
+The current backend behaves like a lightweight exchange prototype with persistent API records:
 
-- Token metadata is seeded directly in `AppState::new()`
+- ETH/BTC token metadata and the ETH/BTC plus BTC/ETH pairs are initialized in PostgreSQL only when absent
 - Missing tokens return `404` with `{ "error": "Token Not Found" }`
 - Invalid orders return `400` with `{ "error": "Invalid Order" }`
 - Duplicate orders return `409` with `{ "error": "Order Already Exists" }`
-- Order cancellation marks the item as `Cancelled` without persisting it beyond memory
+- Orders require an active and approved persisted trading pair
+- Cancellation persists `Cancelled` for pending orders; invalid transitions return `409`
+- Database failures return `500`; they are not reported as successful empty results
 
-### Backend run instructions
-
-From the repository root:
-
-```bash
-cd backend
-cargo run -p api
-```
+See [PostgreSQL local development](#postgresql-local-development) for database setup and backend run instructions.
 
 The server starts on:
 
@@ -230,7 +229,7 @@ From the repository root:
 ```bash
 cd frontend
 npm install
-cp .env.example .env
+cp -n .env.example .env
 npm run dev
 ```
 
@@ -304,7 +303,7 @@ npm run dev
 GET /tokens/{symbol}
 ```
 
-Returns a token record for `ETH` or `BTC` that matches the seeded in-memory data.
+Returns a token record for `ETH` or `BTC` initialized in PostgreSQL without overwriting existing token metadata.
 
 ### Health
 
@@ -323,15 +322,47 @@ GET /orders/{id}
 DELETE /orders/{id}
 ```
 
-These endpoints provide a basic in-memory order lifecycle used to prototype the exchange API contract.
+These endpoints preserve the existing order request/response shape while reading and writing PostgreSQL. Cancellation is limited to pending orders.
+
+### PostgreSQL local development
+
+Start the local PostgreSQL service (for Homebrew, use the installed PostgreSQL formula):
+
+```bash
+brew services start postgresql
+createdb dexsys
+```
+
+Copy the safe example configuration and run the API from any working directory. The API resolves the repository-root `.env`, applies embedded SQLx migrations at startup, and never prints the database URL:
+
+```bash
+cp .env.example .env
+cargo run --manifest-path backend/Cargo.toml -p api
+```
+
+The example `DATABASE_URL` is `postgresql://localhost/dexsys`. Migrations are applied by the application; installing `sqlx-cli` is not required.
+
+The database stores prices and quantities as `NUMERIC(38,18)`. The current API still accepts/returns JSON numbers (`f64`); values are converted through decimal text, rejected if they exceed the database precision, and rejected on retrieval when they cannot round-trip exactly through the existing API number type. The orderbook/matching-engine `i64` values have no established shared unit scale and are not converted or persisted by an API execution flow.
+
+PostgreSQL order writes and their audit events are transactional. PostgreSQL is not transactionally atomic with the in-memory matching engine or blockchain; a future execution/settlement service must add retry and reconciliation handling. Settlement status is application bookkeeping only and is not proof of on-chain confirmation.
+
+### Backend tests
+
+Create a dedicated test database; do not point the persistence integration test at a development database. The test requires the database name to end in `_test` and does not delete test data:
+
+```bash
+createdb dexsys_test
+DEXSYS_TEST_DATABASE_URL=postgresql:///dexsys_test \
+  cargo test --manifest-path backend/Cargo.toml -p api --test persistence -- --ignored
+cargo test --manifest-path backend/Cargo.toml --workspace
+```
 
 ## Roadmap and future work
 
 Planned evolution for the project includes:
 
-- Persistent order storage with a real database
 - Authenticated users and wallet connection
-- A live orderbook and matching engine integration
+- A persistent matching-engine execution integration and recovery/reconciliation flow
 - Real market data, historical price feeds, and WebSocket updates
 - Smart contract settlement, approvals, and token flows
 - Production-grade security, observability, and deployment pipeline

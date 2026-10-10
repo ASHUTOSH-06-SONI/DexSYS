@@ -18,6 +18,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
+ "tower",
 ]
 
 [[package]]
