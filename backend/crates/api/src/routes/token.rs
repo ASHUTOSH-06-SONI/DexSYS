@@ -1,15 +1,30 @@
-use axum::{extract::{Path,State}, routing::get, Json, Router};
-use crate::token::TokenInfo;
-use crate::error::TokenError;
-use crate::state::AppState;
-pub fn router()-> Router<AppState>{
-// creating a change to demonstrate git diff
-    Router::<AppState>::new().route("/tokens/{symbol}",get(tokens)
-)
+use axum::{
+    Json, Router,
+    extract::{Path, State},
+    routing::get,
+};
+
+use crate::{
+    error::TokenError,
+    repository::{self, RepositoryError},
+    state::AppState,
+    token::TokenInfo,
+};
+
+pub fn router() -> Router<AppState> {
+    Router::<AppState>::new().route("/tokens/{symbol}", get(tokens))
 }
-async fn tokens(State(state): State<AppState>,Path(symbol): Path<String>) -> Result<Json<TokenInfo>, TokenError> {
-    match state.tokens.get(&symbol){
-        Some(token)=>Ok(Json(token.clone())),
-        None=> Err(TokenError::NotFound),
+
+async fn tokens(
+    State(state): State<AppState>,
+    Path(symbol): Path<String>,
+) -> Result<Json<TokenInfo>, TokenError> {
+    match repository::get_token(&state.pool, &symbol).await {
+        Ok(token) => Ok(Json(token)),
+        Err(RepositoryError::NotFound) => Err(TokenError::NotFound),
+        Err(error) => {
+            eprintln!("Token persistence request failed: {error:?}");
+            Err(TokenError::Internal)
+        }
     }
 }

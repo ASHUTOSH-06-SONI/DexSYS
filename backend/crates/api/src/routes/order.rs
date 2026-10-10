@@ -1,49 +1,87 @@
-use axum::{routing::{get,post,delete},Json,Router, extract::{Path,State},http::StatusCode};
-use crate::state::AppState;
-use crate::order::{Order, OrderStatus};
-use crate::error::OrderError;
+use axum::{
+    Json, Router,
+    extract::{Path, State},
+    http::StatusCode,
+    routing::{delete, get, post},
+};
 
-pub fn router()-> Router<AppState>{
-    Router::<AppState>::new().route("/orders",post(create_order))
-    .route("/orders/{id}",get(get_order))
-    .route("/orders",get(get_orders))
-    .route("/orders/{id}",delete(cancel_order))
+use crate::{
+    error::OrderError,
+    order::{Order, OrderStatus},
+    repository::{self, RepositoryError},
+    state::AppState,
+};
+
+pub fn router() -> Router<AppState> {
+    Router::<AppState>::new()
+        .route("/orders", post(create_order))
+        .route("/orders/{id}", get(get_order))
+        .route("/orders", get(get_orders))
+        .route("/orders/{id}", delete(cancel_order))
 }
-async fn create_order(State(state): State<AppState>,Json(order): Json<Order>,)->Result<Json<Order>,OrderError>{
-    order.validate()?; 
-    let mut order = order;
+
+async fn create_order(
+    State(state): State<AppState>,
+    Json(mut order): Json<Order>,
+) -> Result<Json<Order>, OrderError> {
+    order.validate()?;
     order.status = OrderStatus::Pending;
-    let mut orders = state.orders.write().await;
-    if orders.contains_key(&order.id){
-        return Err(OrderError::AlreadyExists);
-    }else{
-        orders.insert(order.id.clone(), order.clone());
-    }
+    repository::create_order(&state.pool, &order)
+        .await
+        .map_err(map_order_error)?;
     Ok(Json(order))
 }
 
-async fn get_order(State(state): State<AppState>,Path(id): Path<String>,)->Result<Json<Order>,OrderError>{
-    let orders = state.orders.read().await;
-    match orders.get(&id){
-        Some(order)=>Ok(Json(order.clone())),
-        None=>Err(OrderError::NotFound),
-    }
+async fn get_order(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Order>, OrderError> {
+    repository::get_order(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_order_error)
 }
-async fn get_orders(State(state):State<AppState>,)->Json<Vec<Order>>{
-    let orders = state.orders.read().await;
-    let mut result = Vec::new();
-    for order in orders.values(){
-        result.push(order.clone());
-    }
-    Json(result)
+
+async fn get_orders(State(state): State<AppState>) -> Result<Json<Vec<Order>>, OrderError> {
+    repository::list_orders(&state.pool)
+        .await
+        .map(Json)
+        .map_err(map_order_error)
 }
-async fn cancel_order(State(state): State<AppState>,Path(id): Path<String>,)->Result<StatusCode, OrderError>{
-    let mut orders = state.orders.write().await;
-    match orders.get_mut(&id) {
-        Some(order) => {
-            order.status = OrderStatus::Cancelled;
-            Ok(StatusCode::NO_CONTENT)
+
+async fn cancel_order(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, OrderError> {
+    repository::update_order_status(&state.pool, &id, OrderStatus::Cancelled)
+        .await
+        .map_err(map_order_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn map_order_error(error: RepositoryError) -> OrderError {
+    match error {
+        RepositoryError::NotFound => OrderError::NotFound,
+        RepositoryError::InvalidTransition => OrderError::InvalidTransition,
+        RepositoryError::InvalidFinancialValue(_) => OrderError::InvalidOrder,
+        RepositoryError::Database(error) => {
+            let mapped = match &error {
+                sqlx::Error::Database(database_error)
+                    if database_error.code().as_deref() == Some("23505") =>
+                {
+                    OrderError::AlreadyExists
+                }
+                sqlx::Error::Database(database_error)
+                    if database_error.code().as_deref() == Some("23503") =>
+                {
+                    OrderError::InvalidOrder
+                }
+                _ => {
+                    eprintln!("Order persistence request failed: {error:?}");
+                    OrderError::Internal
+                }
+            };
+            mapped
         }
-        None => Err(OrderError::NotFound),
     }
 }
