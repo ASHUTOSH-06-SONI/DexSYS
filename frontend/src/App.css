@@ -204,6 +204,22 @@ footer span:first-child { font-weight: 800; color: #697384; }
 .order-row { border-bottom-color: var(--border-soft); }
 .order-row strong { color: var(--text); font-size: 11px; }
 .order-row span { color: var(--text-faint); font-size: 9px; }
+.order-price { align-items: flex-end; }
+.order-refresh { padding: 2px 0; border: 0; color: var(--accent-strong); background: transparent; font-size: 9px; cursor: pointer; }
+.order-refresh:disabled { color: var(--text-faint); cursor: wait; }
+.order-feedback { margin: 9px 0; color: var(--text-soft); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.order-error { color: var(--negative); }
+.order-success { color: var(--positive); }
+.order-form { display: grid; gap: 11px; }
+.order-form-heading { display: flex; justify-content: space-between; gap: 10px; padding-top: 14px; border-top: 1px solid var(--border-soft); color: var(--text); font-size: 11px; }
+.order-form-heading span, .order-form label > span { color: var(--text-faint); font-size: 9px; }
+.order-side-control { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.order-side-control button { min-height: 34px; border: 1px solid var(--border); border-radius: 3px; color: var(--text-soft); background: var(--surface); font-size: 11px; cursor: pointer; }
+.order-side-control button.selected { border-color: var(--accent-strong); color: var(--text); background: var(--surface-muted); }
+.order-form label { display: grid; gap: 5px; color: var(--text-soft); font-size: 10px; }
+.order-form input { width: 100%; min-height: 36px; box-sizing: border-box; padding: 8px 9px; border: 1px solid var(--border); border-radius: 3px; color: var(--text); background: var(--surface); font: inherit; font-size: 11px; }
+.order-form input:focus { outline: 1px solid var(--accent-strong); }
+.order-form input[readonly] { color: var(--text-faint); background: var(--surface-muted); }
 .orderbook { padding-top: 14px; }
 .orderbook-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .orderbook-header, .orderbook-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; }

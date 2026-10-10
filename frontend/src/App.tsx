@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { DEMO_RECENT_TRADES, DEMO_TOKENS } from './data/demoData'
 import { getVisibleMarkets, selectMarketToken, type MarketFilter } from './domain/marketSelection'
 import { calculateSwapQuote } from './domain/swapQuote'
 import { getMaxAmount, reverseTokenPair } from './domain/swapState'
 import { loadThemePreference, saveThemePreference } from './domain/themePreference'
 import { getDemoOrderBook } from './domain/orderBook'
+import { createOrder, getOrder, listOrders, type ApiOrderSide, type Order } from './services/orderService'
 import { getMarketTokens } from './services/tokenService'
 import TokenInput from './components/TokenInput'
 import type { Token } from './types'
@@ -13,6 +14,7 @@ import './App.css'
 const timeframes = ['5M', '15M', '1H', '4H', '1D', '1W']
 const chartPoints = '0,170 28,156 56,161 84,139 112,145 140,120 168,128 196,111 224,116 252,88 280,97 308,71 336,79 364,55 392,61 420,42 448,48 476,27 504,36 532,18 560,30 588,9 616,20 644,5'
 const changeTone = (change: string) => change.startsWith('-') ? 'negative' : 'positive'
+const supportedOrderPairs = new Set(['ETH/BTC', 'BTC/ETH'])
 
 function App() {
   const [fromToken, setFromToken] = useState('ETH')
@@ -25,7 +27,17 @@ function App() {
   const [marketFilter, setMarketFilter] = useState<MarketFilter>('all')
   const [marketSearch, setMarketSearch] = useState('')
   const [reviewOpen, setReviewOpen] = useState(false)
-  const [notice, setNotice] = useState('')
+  const [orderSide, setOrderSide] = useState<ApiOrderSide>('Buy')
+  const [orderQuantity, setOrderQuantity] = useState('')
+  const [orderPrice, setOrderPrice] = useState('')
+  const [orderUserId, setOrderUserId] = useState('')
+  const [orderSubmitting, setOrderSubmitting] = useState(false)
+  const [orderError, setOrderError] = useState('')
+  const [orderSuccess, setOrderSuccess] = useState('')
+  const [orders, setOrders] = useState<Order[]>([])
+  const [ordersLoading, setOrdersLoading] = useState(false)
+  const [ordersError, setOrdersError] = useState('')
+  const [refreshingOrderId, setRefreshingOrderId] = useState('')
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [apiTokens, setApiTokens] = useState<Token[] | null>(null)
   const [apiStatus, setApiStatus] = useState<'loading' | 'connected' | 'offline'>('loading')
@@ -79,6 +91,26 @@ function App() {
   const visibleMarkets = getVisibleMarkets(tokens, marketSearch, marketFilter)
   const quote = calculateSwapQuote(amount, from, to)
   const demoOrderBook = getDemoOrderBook(`${from.symbol} / ${to.symbol}`)
+  const tradingPair = `${from.symbol}/${to.symbol}`
+  const orderPairSupported = supportedOrderPairs.has(tradingPair)
+
+  useEffect(() => {
+    if (activeTab !== 'orders' || apiStatus !== 'connected') return
+    const controller = new AbortController()
+    void Promise.resolve().then(() => {
+      if (controller.signal.aborted) return undefined
+      setOrdersLoading(true)
+      setOrdersError('')
+      return listOrders(controller.signal)
+    }).then((loadedOrders) => {
+      if (!controller.signal.aborted && loadedOrders !== undefined) setOrders(loadedOrders)
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) setOrdersError(error instanceof Error ? error.message : 'Unable to load orders.')
+    }).finally(() => {
+      if (!controller.signal.aborted) setOrdersLoading(false)
+    })
+    return () => controller.abort()
+  }, [activeTab, apiStatus])
 
   const switchTokens = () => {
     const reversedPair = reverseTokenPair({ fromToken, toToken })
@@ -96,10 +128,62 @@ function App() {
     setToToken(selection.toToken)
   }
 
-  const confirmSwap = () => {
-    setReviewOpen(false)
-    setNotice('Local quote preview closed · no order was submitted')
-    window.setTimeout(() => setNotice(''), 4200)
+  const refreshOrder = async (id: string) => {
+    setRefreshingOrderId(id)
+    setOrdersError('')
+    try {
+      const refreshedOrder = await getOrder(id)
+      setOrders((currentOrders) => currentOrders.map((order) => order.id === id ? refreshedOrder : order))
+    } catch (error) {
+      setOrdersError(error instanceof Error ? error.message : 'Unable to refresh this order.')
+    } finally {
+      setRefreshingOrderId('')
+    }
+  }
+
+  const submitOrder = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setOrderError('')
+    setOrderSuccess('')
+    if (apiStatus !== 'connected') {
+      setOrderError('Connect to the backend before submitting an order.')
+      return
+    }
+    if (!orderPairSupported) {
+      setOrderError(`The backend does not support the ${tradingPair} trading pair.`)
+      return
+    }
+    if (!orderUserId.trim()) {
+      setOrderError('Enter a user ID. This value is unverified and is not wallet authentication.')
+      return
+    }
+    const quantity = Number(orderQuantity)
+    const price = Number(orderPrice)
+    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0) {
+      setOrderError('Enter a valid positive base quantity and limit price.')
+      return
+    }
+    setOrderSubmitting(true)
+    try {
+      const savedOrder = await createOrder({
+        id: crypto.randomUUID(),
+        user_id: orderUserId.trim(),
+        trading_pair: tradingPair,
+        side: orderSide,
+        order_type: 'Limit',
+        price,
+        quantity,
+        status: 'Pending',
+      })
+      setOrders((currentOrders) => [savedOrder, ...currentOrders.filter((order) => order.id !== savedOrder.id)])
+      setOrderSuccess(`Order ${savedOrder.id} submitted · status: ${savedOrder.status}.`)
+      setActiveTab('orders')
+      setReviewOpen(false)
+    } catch (error) {
+      setOrderError(error instanceof Error ? error.message : 'Order submission failed.')
+    } finally {
+      setOrderSubmitting(false)
+    }
   }
 
   return (
@@ -203,9 +287,20 @@ function App() {
             <button className="switch-button" aria-label="Switch tokens" onClick={switchTokens}>↕</button>
             <TokenInput label="You receive" token={to} amount={quote} tokens={tokens} balanceLabel={apiStatus === 'connected' ? 'API seed' : 'Demo / seed'} onAmountChange={() => undefined} onTokenChange={setToToken} disabledToken={from.symbol} readOnly />
             <div className="quote-details"><span>Indicative rate</span><strong>1 {from.symbol} ≈ {calculateSwapQuote('1', from, to)} {to.symbol}</strong><span>Price impact</span><strong>Unavailable</strong><span>Network fee</span><strong>Not connected</strong></div>
-            <button className="primary-action" disabled={!amount || Number(amount) <= 0} onClick={() => setReviewOpen(true)}>{!amount ? 'Enter an amount' : 'Review quote preview'}</button>
+            <button className="primary-action" disabled={!amount || Number(amount) <= 0} onClick={() => { setOrderError(''); setOrderSuccess(''); setReviewOpen(true) }}>{!amount ? 'Enter an amount' : 'Review quote preview'}</button>
             <p className="panel-footnote">Local estimate only · no order or transaction is submitted</p>
-          </div> : <div className="orders-panel"><div className="panel-title"><div><h2>Sample orders</h2><p>Prototype history · backend orders not connected.</p></div></div>{DEMO_RECENT_TRADES.slice(0, 3).map((trade) => <div className="order-row" key={`${trade.time}-${trade.pair}`}><div><strong>{trade.pair}</strong><span>{trade.side} · {trade.amount}</span></div><div className="order-price"><strong>{trade.price}</strong><span className={trade.status === 'Filled' ? 'positive' : ''}>{trade.status}</span></div></div>)}</div>}
+          </div> : <div className="orders-panel">
+            <div className="panel-title"><div><h2>Backend orders</h2><p>Persisted API order history · limit orders only.</p></div></div>
+            {orderSuccess && <p className="order-feedback order-success" role="status">{orderSuccess}</p>}
+            {apiStatus !== 'connected' && <p className="order-feedback order-error">Connect to the backend to load persisted orders. Demo rows are not shown as live history.</p>}
+            {ordersLoading && <p className="order-feedback" role="status">Loading orders…</p>}
+            {ordersError && <p className="order-feedback order-error" role="alert">{ordersError}</p>}
+            {apiStatus === 'connected' && !ordersLoading && !ordersError && orders.length === 0 && <p className="order-feedback">No persisted orders yet.</p>}
+            {orders.map((order) => <div className="order-row" key={order.id}>
+              <div><strong>{order.trading_pair}</strong><span>{order.side} · {order.quantity} · {order.order_type}</span></div>
+              <div className="order-price"><strong>{order.price ?? 'Market'}</strong><span>{order.status}</span><button className="order-refresh" disabled={refreshingOrderId === order.id} onClick={() => void refreshOrder(order.id)}>{refreshingOrderId === order.id ? 'Refreshing…' : 'Refresh'}</button></div>
+            </div>)}
+          </div>}
         </aside>
       </section>
 
@@ -231,7 +326,7 @@ function App() {
       <section className="activity-section" id="activity">
         <div className="section-heading"><div><p className="eyebrow">ACTIVITY</p><h2>Sample trade history</h2></div></div>
         <p className="panel-footnote">Representative demo data only · not loaded from the order API</p>
-        <div className="activity-table"><div className="table-head"><span>Time</span><span>Pair</span><span>Side</span><span>Amount</span><span>Price</span><span>Status</span></div>{DEMO_RECENT_TRADES.map((trade) => <div className="table-row" key={trade.time}><span>{trade.time}</span><strong>{trade.pair}</strong><span>{trade.side}</span><span>{trade.amount}</span><span>{trade.price}</span><span className={trade.status === 'Filled' ? 'positive' : ''}>{trade.status}</span></div>)}</div>
+        <div className="activity-table"><div className="table-head"><span>Time</span><span>Pair</span><span>Side</span><span>Amount</span><span>Price</span><span>Status</span></div>{DEMO_RECENT_TRADES.map((trade, index) => <div className="table-row" key={`${index}-${trade.pair}`}><span>Demo</span><strong>{trade.pair}</strong><span>{trade.side}</span><span>{trade.amount}</span><span>{trade.price}</span><span className={trade.status === 'Filled' ? 'positive' : ''}>{trade.status}</span></div>)}</div>
       </section>
 
       <section className="token-section" id="token-information" aria-labelledby="token-information-title">
@@ -247,8 +342,25 @@ function App() {
 
       <footer id="footer"><div><strong>DexSYS</strong><span>Decentralized exchange infrastructure</span></div><div><span>Testnet environment</span><span>Token values are seeded and indicative</span></div></footer>
 
-      {reviewOpen && <div className="modal-backdrop" role="presentation" onClick={() => setReviewOpen(false)}><section className="review-modal" role="dialog" aria-modal="true" aria-labelledby="review-title" onClick={(event) => event.stopPropagation()}><button className="modal-close" aria-label="Close review" autoFocus onClick={() => setReviewOpen(false)}>×</button><p className="eyebrow">LOCAL QUOTE PREVIEW</p><h2 id="review-title">Review quote</h2><p className="modal-copy">This frontend estimate does not create an API order.</p><div className="review-route"><div><span>Pay</span><strong>{amount || '0'} {from.symbol}</strong></div><span className="route-arrow">→</span><div><span>Receive</span><strong>{quote} {to.symbol}</strong></div></div><div className="review-lines"><span>Rate <b>1 {from.symbol} ≈ {calculateSwapQuote('1', from, to)} {to.symbol}</b></span><span>Order API <b>Not submitted</b></span><span>Settlement <b>Not connected</b></span></div><div className="modal-warning">No wallet provider or transaction service is connected. This is a quote preview only.</div><button className="primary-action" onClick={confirmSwap}>Close preview</button></section></div>}
-      {notice && <div className="toast" role="status">{notice}</div>}
+      {reviewOpen && <div className="modal-backdrop" role="presentation" onClick={() => { if (!orderSubmitting) setReviewOpen(false) }}><section className="review-modal" role="dialog" aria-modal="true" aria-labelledby="review-title" onClick={(event) => event.stopPropagation()}><button className="modal-close" aria-label="Close review" autoFocus disabled={orderSubmitting} onClick={() => setReviewOpen(false)}>×</button><p className="eyebrow">ORDER REQUEST</p><h2 id="review-title">Submit a limit order</h2><p className="modal-copy">The quote below is illustrative. Order details are entered separately and submitted to the backend.</p><div className="review-route"><div><span>Preview only</span><strong>{amount || '0'} {from.symbol} → {quote} {to.symbol}</strong></div></div>
+        <form className="order-form" onSubmit={(event) => void submitOrder(event)}>
+          <div className="order-form-heading"><strong>Limit order</strong><span>Market orders unsupported</span></div>
+          <div className="order-side-control" role="group" aria-label="Order side">
+            <button type="button" className={orderSide === 'Buy' ? 'selected' : ''} onClick={() => setOrderSide('Buy')}>Buy</button>
+            <button type="button" className={orderSide === 'Sell' ? 'selected' : ''} onClick={() => setOrderSide('Sell')}>Sell</button>
+          </div>
+          <label>User ID <span>(unverified; no wallet/auth connected)</span><input required value={orderUserId} onChange={(event) => setOrderUserId(event.target.value)} autoComplete="off" /></label>
+          <label>Trading pair<input readOnly value={tradingPair} /></label>
+          <label>Base quantity ({from.symbol})<input required type="number" min="0" step="any" value={orderQuantity} onChange={(event) => setOrderQuantity(event.target.value)} /></label>
+          <label>Limit price ({to.symbol} per {from.symbol})<input required type="number" min="0" step="any" value={orderPrice} onChange={(event) => setOrderPrice(event.target.value)} /></label>
+          {!orderPairSupported && <p className="order-feedback order-error">The backend currently supports ETH/BTC and BTC/ETH only. Change the preview pair to submit.</p>}
+          {apiStatus !== 'connected' && <p className="order-feedback order-error">Backend unavailable. Order submission is disabled until API token metadata loads.</p>}
+          {orderError && <p className="order-feedback order-error" role="alert">{orderError}</p>}
+          {orderSuccess && <p className="order-feedback order-success" role="status">{orderSuccess}</p>}
+          <button className="primary-action" type="submit" disabled={orderSubmitting || apiStatus !== 'connected' || !orderPairSupported}>{orderSubmitting ? 'Submitting…' : 'Submit limit order'}</button>
+          <p className="panel-footnote">No wallet signature is requested. Settlement and blockchain confirmation are not provided.</p>
+        </form>
+      </section></div>}
     </main>
   )
 }

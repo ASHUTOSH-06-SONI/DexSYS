@@ -17,9 +17,35 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export async function getJson<T>(path: string, parse: JsonParser<T>, signal?: AbortSignal): Promise<T> {
+  return requestJson(path, { method: 'GET' }, parse, signal)
+}
+
+export async function postJson<T>(
+  path: string,
+  body: unknown,
+  parse: JsonParser<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  return requestJson(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }, parse, signal)
+}
+
+async function requestJson<T>(
+  path: string,
+  init: RequestInit,
+  parse: JsonParser<T>,
+  signal?: AbortSignal,
+): Promise<T> {
   let response: Response
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, { headers: { Accept: 'application/json' }, signal })
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers: { Accept: 'application/json', ...init.headers },
+      signal,
+    })
   } catch (error) {
     if (signal?.aborted) throw error
     throw new ApiError(error instanceof Error ? `Unable to reach DexSYS API: ${error.message}` : 'Unable to reach DexSYS API.')
