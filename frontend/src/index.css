@@ -1,62 +1,54 @@
-@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&display=swap');
-
-* { box-sizing: border-box; }
-
 :root {
-  font-family: "Barlow", "Bahnschrift", Arial, Helvetica, sans-serif;
-  color: #18231e;
-  background: #f2f4f0;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #e5e9e7;
+  background: #0c1110;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  letter-spacing: 0;
-  font-optical-sizing: auto;
   font-weight: 400;
-  --page: #f2f4f0;
-  --surface: #ffffff;
-  --surface-muted: #f6f7f4;
-  --surface-strong: #e9ede7;
-  --text: #18231e;
-  --text-soft: #647169;
-  --text-faint: #8b958e;
-  --border: #dfe5de;
-  --border-soft: #e9ede8;
-  --accent: #b4df43;
-  --accent-strong: #83b52d;
-  --positive: #238451;
-  --negative: #c85550;
-  --header: #fcfdfb;
-  --chart-grid: #e9ede8;
-  --chart: #429c69;
-  --shadow: 0 8px 25px rgba(32, 48, 38, .035);
-  color-scheme: light;
+  --page: #0c1110;
+  --surface: #121917;
+  --surface-raised: #171f1b;
+  --surface-muted: #19221d;
+  --surface-strong: #243029;
+  --text: #e5e9e7;
+  --text-soft: #a7b2ab;
+  --text-faint: #738078;
+  --border: #29342d;
+  --border-soft: #202a24;
+  --accent: #a8d672;
+  --accent-strong: #b9e58b;
+  --positive: #6fc693;
+  --negative: #ed7772;
+  --header: #101613;
+  --shadow: 0 12px 30px rgba(0, 0, 0, .18);
+  color-scheme: dark;
 }
 
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --page: #111714;
-  --surface: #181f1b;
-  --surface-muted: #202823;
-  --surface-strong: #29322c;
-  --text: #edf2ed;
-  --text-soft: #abb6ad;
-  --text-faint: #79877d;
-  --border: #303a33;
-  --border-soft: #28322c;
-  --accent: #b4df43;
-  --accent-strong: #c3ea59;
-  --positive: #6bc591;
-  --negative: #f17e77;
-  --header: #171e1a;
-  --chart-grid: #2b352e;
-  --chart: #8fca7a;
-  --shadow: 0 8px 25px rgba(0, 0, 0, .12);
+:root[data-theme="light"] {
+  color-scheme: light;
+  --page: #f2f5f2;
+  --surface: #fff;
+  --surface-raised: #f7f9f7;
+  --surface-muted: #f0f4f0;
+  --surface-strong: #e6ece7;
+  --text: #18231e;
+  --text-soft: #5e6b63;
+  --text-faint: #78847c;
+  --border: #d8e0d9;
+  --border-soft: #e6ece7;
+  --accent: #81b955;
+  --accent-strong: #548f37;
+  --positive: #21834e;
+  --negative: #c84f4a;
+  --header: #fbfcfb;
+  --shadow: 0 10px 25px rgba(31, 45, 35, .055);
 }
 
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
-body { width: 100%; min-width: 0; margin: 0; background: var(--page); color: var(--text); }
+body { width: 100%; min-width: 0; min-height: 100vh; margin: 0; background: var(--page); color: var(--text); }
 button, input, select { font: inherit; letter-spacing: 0; }
 button { color: inherit; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
