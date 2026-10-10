@@ -1,6 +1,7 @@
 use shared::Order;
 use orderbook::OrderBook;
 
+#[derive(Clone)]
 pub struct MatchingEngine {
     pub orderbook: OrderBook,
 }

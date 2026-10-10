@@ -7,6 +7,7 @@ use axum::{
 
 use crate::{
     error::OrderError,
+    matching::{self, MatchingError},
     order::{Order, OrderStatus},
     repository::{self, RepositoryError},
     state::AppState,
@@ -25,10 +26,14 @@ async fn create_order(
     Json(mut order): Json<Order>,
 ) -> Result<Json<Order>, OrderError> {
     order.validate()?;
-    order.status = OrderStatus::Pending;
-    repository::create_order(&state.pool, &order)
+    matching::engine_order_from_api(&order)?;
+    let mut engines = state.matching_engines.lock().await;
+    let engine = engines
+        .entry(order.trading_pair.clone())
+        .or_insert_with(matching_engine::MatchingEngine::new);
+    order.status = matching::process_and_persist(&state.pool, engine, &order)
         .await
-        .map_err(map_order_error)?;
+        .map_err(map_matching_error)?;
     Ok(Json(order))
 }
 
@@ -53,10 +58,28 @@ async fn cancel_order(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, OrderError> {
+    let order = repository::get_order(&state.pool, &id)
+        .await
+        .map_err(map_order_error)?;
+    let mut engines = state.matching_engines.lock().await;
+    let mut staged_engine = engines.get(&order.trading_pair).cloned();
+    if let Some(engine) = staged_engine.as_mut() {
+        engine.orderbook.cancel_order(&id);
+    }
     repository::update_order_status(&state.pool, &id, OrderStatus::Cancelled)
         .await
         .map_err(map_order_error)?;
+    if let Some(engine) = staged_engine {
+        engines.insert(order.trading_pair, engine);
+    }
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn map_matching_error(error: MatchingError) -> OrderError {
+    match error {
+        MatchingError::InvalidOrder => OrderError::InvalidOrder,
+        MatchingError::Persistence(error) => map_order_error(error),
+    }
 }
 
 fn map_order_error(error: RepositoryError) -> OrderError {

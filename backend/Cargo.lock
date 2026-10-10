@@ -14,8 +14,10 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "dotenvy",
+ "matching-engine",
  "serde",
  "serde_json",
+ "shared",
  "sqlx",
  "tokio",
  "tower",

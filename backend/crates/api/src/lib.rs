@@ -7,3 +7,4 @@ pub mod token;
 pub use order::{Order, OrderSide, OrderType};
 pub mod repository;
 pub mod db;
+pub mod matching;
