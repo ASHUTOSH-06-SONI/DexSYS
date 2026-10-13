@@ -1,10 +1,11 @@
-pub mod routes;
-pub mod handlers;
-pub mod state;
 pub mod error;
+pub mod handlers;
 pub mod order;
+pub mod routes;
+pub mod state;
 pub mod token;
 pub use order::{Order, OrderSide, OrderType};
-pub mod repository;
+pub mod auth;
 pub mod db;
 pub mod matching;
+pub mod repository;

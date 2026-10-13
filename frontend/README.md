@@ -32,7 +32,9 @@ export default defineConfig([
 
   Vite serves the frontend on its default port (normally `5173`). The development proxy forwards `/api/*` to the Rust API at `http://127.0.0.1:8080` and removes the `/api` prefix. Start the backend separately from `backend/` with `cargo run -p api`.
 
-  Copy `.env.example` to `.env` only when local overrides are needed. `VITE_API_BASE_URL` is the browser-visible API base and defaults to `/api`. `DEXSYS_API_PROXY_TARGET` changes the Vite development proxy target. Do not put credentials or secrets in `VITE_*` variables; they are shipped to the browser.
+  Configure `VITE_AUTH0_DOMAIN`, `VITE_AUTH0_CLIENT_ID`, and `VITE_AUTH0_AUDIENCE` for the Auth0 SPA and API. Set the audience to `https://api.dexsys.local`. The SPA callback and logout URLs use the current origin (normally `http://localhost:5173` locally); add that origin to the Auth0 application's Allowed Callback URLs, Allowed Logout URLs, and Allowed Web Origins. The Auth0 client ID and audience are public configuration; never put an Auth0 client secret in the frontend.
+
+  `VITE_API_BASE_URL` is the browser-visible API base and defaults to `/api`. `DEXSYS_API_PROXY_TARGET` changes the Vite development proxy target. Do not put credentials or secrets in `VITE_*` variables; they are shipped to the browser.
 
   For a deployed frontend, route the configured API base through a same-origin reverse proxy unless the API explicitly enables and configures CORS. The Rust API currently binds to `127.0.0.1:8080` and has no CORS middleware.
 
@@ -73,16 +75,18 @@ export default defineConfig([
 
   ## Other backend contracts
 
-  The API also defines these order routes, but the UI does not call them:
+  The API also defines these order routes. They require an Auth0 access token for the DexSYS API in `Authorization: Bearer ...`; ID tokens are not used as API credentials.
 
   | Method | Route | Contract |
   | --- | --- | --- |
   | `GET` | `/orders` | JSON array of `Order` records |
-  | `POST` | `/orders` | JSON `Order` request and response; the server validates it and sets status to `Pending` |
+  | `POST` | `/orders` | JSON order fields and response; the server derives the owner from the verified Auth0 principal and sets status to `Pending` |
   | `GET` | `/orders/{id}` | JSON `Order` record |
   | `DELETE` | `/orders/{id}` | `204 No Content` on success |
 
-  An order contains `id`, `user_id`, `trading_pair`, `side` (`Buy`/`Sell`), `order_type` (`Limit`/`Market`), nullable `price`, `quantity`, and `status` (`Pending`/`Filled`/`Cancelled`). Errors are JSON `{ "error": "..." }`: not found (`404`), invalid order (`400`), or duplicate ID (`409`). Orders are held in process memory. There is no authentication or user identity integration, so sample activity remains explicitly separate and order submission is not exposed by the frontend.
+  An order response contains `id`, server-assigned `user_id`, `trading_pair`, `side` (`Buy`/`Sell`), `order_type` (`Limit`/`Market`), nullable `price`, `quantity`, and `status` (`Pending`/`Filled`/`Cancelled`). Listing, retrieval, and cancellation are restricted to the authenticated principal; another user's order is returned as not found (`404`). Legacy orders have no trusted principal mapping and are not automatically assigned. Wallet connectivity and SIWE remain separate from application authentication.
+
+  The backend requires `AUTH0_DOMAIN` (tenant hostname without scheme/path) and optionally accepts `AUTH0_AUDIENCE` (defaults to `https://api.dexsys.local`). It validates RS256 signatures against cached Auth0 JWKS, issuer, audience, and expiry. No client secret is required.
 
   The `orderbook`, `matching-engine`, and `shared` Rust crates currently contain no implementation, and the API exposes no orderbook route. No fabricated orderbook is rendered. Wallet, portfolio, and blockchain transaction integrations are also pending.
 
@@ -98,7 +102,7 @@ export default defineConfig([
   ### Backend integration pending
 
   - Token listing, live market/quote/history feeds, authenticated user portfolio, and persistent order history.
-  - Order submission/cancellation UI after authentication, ownership, and lifecycle contracts are defined.
+  - Full order matching lifecycle and settlement integrations.
   - Orderbook API and matching-engine implementation.
 
   ### Blockchain integration pending

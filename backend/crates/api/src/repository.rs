@@ -21,6 +21,37 @@ pub enum RepositoryError {
     InvalidTransition,
 }
 
+pub async fn get_or_create_principal(
+    pool: &PgPool,
+    issuer: &str,
+    subject: &str,
+) -> Result<i64, RepositoryError> {
+    let id = sqlx::query_scalar(
+        "INSERT INTO auth_principals (issuer, subject)
+         VALUES ($1, $2)
+         ON CONFLICT (issuer, subject) DO UPDATE SET subject = EXCLUDED.subject
+         RETURNING id",
+    )
+    .bind(issuer)
+    .bind(subject)
+    .fetch_one(pool)
+    .await?;
+    Ok(id)
+}
+
+pub async fn get_principal_id(
+    pool: &PgPool,
+    issuer: &str,
+    subject: &str,
+) -> Result<i64, RepositoryError> {
+    sqlx::query_scalar("SELECT id FROM auth_principals WHERE issuer = $1 AND subject = $2")
+        .bind(issuer)
+        .bind(subject)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(RepositoryError::NotFound)
+}
+
 impl From<sqlx::Error> for RepositoryError {
     fn from(error: sqlx::Error) -> Self {
         Self::Database(error)
@@ -244,8 +275,8 @@ pub async fn create_order(pool: &PgPool, order: &Order) -> Result<(), Repository
     sqlx::query(
         "INSERT INTO orders
          (id, user_id, trading_pair_id, side, order_type, price, original_quantity,
-          remaining_quantity, status)
-         VALUES ($1, $2, $3, $4, $5, $6::NUMERIC, $7::NUMERIC, $7::NUMERIC, $8)",
+          remaining_quantity, status, owner_principal_id)
+         VALUES ($1, $2, $3, $4, $5, $6::NUMERIC, $7::NUMERIC, $7::NUMERIC, $8, $9)",
     )
     .bind(&order.id)
     .bind(&order.user_id)
@@ -255,6 +286,7 @@ pub async fn create_order(pool: &PgPool, order: &Order) -> Result<(), Repository
     .bind(price)
     .bind(quantity)
     .bind(status)
+    .bind(order.owner_principal_id)
     .execute(&mut *transaction)
     .await?;
     insert_audit(
@@ -282,12 +314,46 @@ pub async fn get_order(pool: &PgPool, id: &str) -> Result<Order, RepositoryError
     order_from_row(&row)
 }
 
+pub async fn get_order_for_principal(
+    pool: &PgPool,
+    id: &str,
+    principal_id: i64,
+) -> Result<Order, RepositoryError> {
+    let row = sqlx::query(
+        "SELECT id, user_id, trading_pair_id, side, order_type, price::TEXT AS price,
+                original_quantity::TEXT AS quantity, status
+         FROM orders WHERE id = $1 AND owner_principal_id = $2",
+    )
+    .bind(id)
+    .bind(principal_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(RepositoryError::NotFound)?;
+    order_from_row(&row)
+}
+
 pub async fn list_orders(pool: &PgPool) -> Result<Vec<Order>, RepositoryError> {
     let rows = sqlx::query(
         "SELECT id, user_id, trading_pair_id, side, order_type, price::TEXT AS price,
                 original_quantity::TEXT AS quantity, status
          FROM orders ORDER BY created_at, id",
     )
+    .fetch_all(pool)
+    .await?;
+    rows.iter().map(order_from_row).collect()
+}
+
+pub async fn list_orders_for_principal(
+    pool: &PgPool,
+    principal_id: i64,
+) -> Result<Vec<Order>, RepositoryError> {
+    let rows = sqlx::query(
+        "SELECT id, user_id, trading_pair_id, side, order_type, price::TEXT AS price,
+                original_quantity::TEXT AS quantity, status
+         FROM orders WHERE owner_principal_id = $1
+         ORDER BY created_at, id",
+    )
+    .bind(principal_id)
     .fetch_all(pool)
     .await?;
     rows.iter().map(order_from_row).collect()
@@ -465,8 +531,8 @@ async fn insert_order(
     sqlx::query(
         "INSERT INTO orders
          (id, user_id, trading_pair_id, side, order_type, price, original_quantity,
-          remaining_quantity, status)
-         VALUES ($1, $2, $3, $4, $5, $6::NUMERIC, $7::NUMERIC, $7::NUMERIC, 'PENDING')",
+          remaining_quantity, status, owner_principal_id)
+         VALUES ($1, $2, $3, $4, $5, $6::NUMERIC, $7::NUMERIC, $7::NUMERIC, 'PENDING', $8)",
     )
     .bind(&order.id)
     .bind(&order.user_id)
@@ -475,6 +541,7 @@ async fn insert_order(
     .bind(order_type)
     .bind(price)
     .bind(quantity)
+    .bind(order.owner_principal_id)
     .execute(&mut **transaction)
     .await?;
     Ok(())
@@ -502,6 +569,52 @@ pub async fn update_order_status(
             .await?;
         transaction.rollback().await?;
         return Err(if exists {
+            RepositoryError::InvalidTransition
+        } else {
+            RepositoryError::NotFound
+        });
+    }
+    insert_audit(
+        &mut transaction,
+        "order",
+        id,
+        "ORDER_STATUS_UPDATED",
+        serde_json::json!({"status": status}),
+    )
+    .await?;
+    transaction.commit().await?;
+    Ok(())
+}
+
+pub async fn update_order_status_for_principal(
+    pool: &PgPool,
+    id: &str,
+    principal_id: i64,
+    status: OrderStatus,
+) -> Result<(), RepositoryError> {
+    let status = order_status_to_db(&status);
+    let mut transaction = pool.begin().await?;
+    let update = sqlx::query(
+        "UPDATE orders SET status = $3, updated_at = NOW()
+         WHERE id = $1 AND owner_principal_id = $2 AND status = 'PENDING'",
+    )
+    .bind(id)
+    .bind(principal_id)
+    .bind(status)
+    .execute(&mut *transaction)
+    .await?;
+    if update.rows_affected() == 0 {
+        let owned_order_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM orders WHERE id = $1 AND owner_principal_id = $2
+             )",
+        )
+        .bind(id)
+        .bind(principal_id)
+        .fetch_one(&mut *transaction)
+        .await?;
+        transaction.rollback().await?;
+        return Err(if owned_order_exists {
             RepositoryError::InvalidTransition
         } else {
             RepositoryError::NotFound
@@ -826,6 +939,7 @@ fn order_from_row(row: &sqlx::postgres::PgRow) -> Result<Order, RepositoryError>
     Ok(Order {
         id: row.try_get("id")?,
         user_id: row.try_get("user_id")?,
+        owner_principal_id: None,
         trading_pair: row.try_get("trading_pair_id")?,
         side,
         order_type,

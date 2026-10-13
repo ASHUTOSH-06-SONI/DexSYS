@@ -16,8 +16,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-export async function getJson<T>(path: string, parse: JsonParser<T>, signal?: AbortSignal): Promise<T> {
-  return requestJson(path, { method: 'GET' }, parse, signal)
+export async function getJson<T>(
+  path: string,
+  parse: JsonParser<T>,
+  signal?: AbortSignal,
+  accessToken?: string,
+): Promise<T> {
+  return requestJson(path, { method: 'GET' }, parse, signal, accessToken)
 }
 
 export async function postJson<T>(
@@ -25,12 +30,20 @@ export async function postJson<T>(
   body: unknown,
   parse: JsonParser<T>,
   signal?: AbortSignal,
+  accessToken?: string,
 ): Promise<T> {
   return requestJson(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  }, parse, signal)
+  }, parse, signal, accessToken)
+}
+
+export async function deleteNoContent(path: string, accessToken: string, signal?: AbortSignal): Promise<void> {
+  const response = await request(path, { method: 'DELETE' }, signal, accessToken)
+  if (response.status !== 204) {
+    throw new ApiError(`DexSYS API returned an unexpected response (${response.status}).`, response.status)
+  }
 }
 
 async function requestJson<T>(
@@ -38,18 +51,9 @@ async function requestJson<T>(
   init: RequestInit,
   parse: JsonParser<T>,
   signal?: AbortSignal,
+  accessToken?: string,
 ): Promise<T> {
-  let response: Response
-  try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
-      ...init,
-      headers: { Accept: 'application/json', ...init.headers },
-      signal,
-    })
-  } catch (error) {
-    if (signal?.aborted) throw error
-    throw new ApiError(error instanceof Error ? `Unable to reach DexSYS API: ${error.message}` : 'Unable to reach DexSYS API.')
-  }
+  const response = await request(path, init, signal, accessToken)
 
   let payload: unknown
   try {
@@ -58,15 +62,45 @@ async function requestJson<T>(
     throw new ApiError(`DexSYS API returned invalid JSON (${response.status}).`, response.status)
   }
 
-  if (!response.ok) {
-    const message = isRecord(payload) && typeof payload.error === 'string' ? payload.error : `DexSYS API request failed (${response.status}).`
-    throw new ApiError(message, response.status)
-  }
-
   try {
     return parse(payload)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Response did not match the expected format.'
     throw new ApiError(`Invalid DexSYS API response: ${message}`, response.status)
   }
+}
+
+async function request(
+  path: string,
+  init: RequestInit,
+  signal?: AbortSignal,
+  accessToken?: string,
+): Promise<Response> {
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers: {
+        Accept: 'application/json',
+        ...init.headers,
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
+      signal,
+    })
+  } catch (error) {
+    if (signal?.aborted) throw error
+    throw new ApiError(error instanceof Error ? `Unable to reach DexSYS API: ${error.message}` : 'Unable to reach DexSYS API.')
+  }
+
+  if (!response.ok) {
+    let payload: unknown
+    try {
+      payload = await response.json()
+    } catch {
+      throw new ApiError(`DexSYS API returned invalid JSON (${response.status}).`, response.status)
+    }
+    const message = isRecord(payload) && typeof payload.error === 'string' ? payload.error : `DexSYS API request failed (${response.status}).`
+    throw new ApiError(message, response.status)
+  }
+  return response
 }

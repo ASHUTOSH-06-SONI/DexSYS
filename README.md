@@ -15,10 +15,12 @@ Current implementation highlights:
 
 Current gaps:
 
-- No wallet connection or authentication
+- Auth0 OIDC application authentication for order endpoints; wallet identity remains separate
 - No blockchain settlement or on-chain confirmation flow
 - No real market data feed, orderbook feed, or WebSocket stream
-- No production-grade auth/user flows
+- No wallet signing, SIWE, balance, or settlement verification
+
+Order endpoints require a valid Auth0 access token for the API audience `https://api.dexsys.local`. Configure the frontend `VITE_AUTH0_DOMAIN`, `VITE_AUTH0_CLIENT_ID`, and `VITE_AUTH0_AUDIENCE`, and the backend `AUTH0_DOMAIN` (optionally `AUTH0_AUDIENCE`). Orders are linked to a trusted issuer/subject principal; existing rows remain unassigned until separately verified and mapped.
 
 ## Architecture overview
 

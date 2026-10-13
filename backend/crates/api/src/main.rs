@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use api::{db, repository, routes, state::AppState};
+use api::{auth::Authenticator, db, repository, routes, state::AppState};
 
 #[tokio::main]
 async fn main() {
@@ -25,7 +25,8 @@ async fn main() {
     let state = AppState::restore(pool)
         .await
         .expect("Failed to restore persisted limit orders into the in-memory orderbooks");
-    let app = routes::router().with_state(state);
+    let authenticator = Authenticator::from_env().expect("Invalid Auth0 configuration");
+    let app = routes::router(authenticator).with_state(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await
         .expect("Failed to bind API listener");
