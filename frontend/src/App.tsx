@@ -1,9 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { useAuth0 } from '@auth0/auth0-react'
 import { DEMO_TOKENS } from './data/demoData'
 import { getVisibleMarkets, selectMarketToken, type MarketFilter } from './domain/marketSelection'
 import { activityFilters, filterOrders, type ActivityFilter } from './domain/orderActivity'
 import { loadThemePreference, saveThemePreference } from './domain/themePreference'
-import { createOrder, getOrder, listOrders, type ApiOrderSide, type Order } from './services/orderService'
+import { cancelOrder, createOrder, getOrder, listOrders, type ApiOrderSide, type Order } from './services/orderService'
 import { getMarketTokens } from './services/tokenService'
 import type { Token } from './types'
 import './App.css'
@@ -15,6 +16,14 @@ type OrderPanelTab = 'entry' | 'orders'
 const changeTone = (change: string) => change.startsWith('-') ? 'negative' : 'positive'
 
 function App() {
+  const {
+    getAccessTokenSilently,
+    isAuthenticated,
+    isLoading: authLoading,
+    loginWithRedirect,
+    logout,
+    user,
+  } = useAuth0()
   const [theme, setTheme] = useState(() => loadThemePreference(window.localStorage))
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [activeSection, setActiveSection] = useState('trade')
@@ -31,15 +40,16 @@ function App() {
   const [orderSide, setOrderSide] = useState<ApiOrderSide>('Buy')
   const [orderQuantity, setOrderQuantity] = useState('')
   const [orderPrice, setOrderPrice] = useState('')
-  const [orderUserId, setOrderUserId] = useState('')
   const [orderSubmitting, setOrderSubmitting] = useState(false)
   const [orderError, setOrderError] = useState('')
   const [orderSuccess, setOrderSuccess] = useState('')
   const [orders, setOrders] = useState<Order[]>([])
+  const [ordersOwnerSubject, setOrdersOwnerSubject] = useState<string | null>(null)
   const [ordersLoading, setOrdersLoading] = useState(false)
   const [ordersError, setOrdersError] = useState('')
   const [ordersRevision, setOrdersRevision] = useState(0)
   const [refreshingOrderId, setRefreshingOrderId] = useState('')
+  const [cancellingOrderId, setCancellingOrderId] = useState('')
   const [activityFilter, setActivityFilter] = useState<ActivityFilter>('All')
 
   const tokens = apiTokens ?? DEMO_TOKENS
@@ -48,8 +58,9 @@ function App() {
   const [baseSymbol, quoteSymbol] = tradingPair.split('/')
   const baseToken = tokens.find((item) => item.symbol === baseSymbol) ?? token
   const orderPairSupported = supportedPairs.includes(tradingPair)
-  const openOrders = orders.filter((order) => order.status === 'Pending')
-  const activityOrders = filterOrders(orders, activityFilter)
+  const visibleOrders = isAuthenticated && user?.sub === ordersOwnerSubject ? orders : []
+  const openOrders = visibleOrders.filter((order) => order.status === 'Pending')
+  const activityOrders = filterOrders(visibleOrders, activityFilter)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -75,22 +86,27 @@ function App() {
   }, [retryTokenLoad])
 
   useEffect(() => {
-    if (apiStatus !== 'connected') return
+    if (apiStatus !== 'connected' || authLoading || !isAuthenticated || !user?.sub) return
+    const requestSubject = user.sub
     const controller = new AbortController()
-    void Promise.resolve().then(() => {
-      if (controller.signal.aborted) return undefined
+    void Promise.resolve().then(async () => {
       setOrdersLoading(true)
       setOrdersError('')
-      return listOrders(controller.signal)
+      const accessToken = await getAccessTokenSilently()
+      if (!accessToken) throw new Error('Auth0 did not return an API access token.')
+      return listOrders(accessToken, controller.signal)
     }).then((loadedOrders) => {
-      if (!controller.signal.aborted && loadedOrders !== undefined) setOrders(loadedOrders)
+      if (!controller.signal.aborted) {
+        setOrders(loadedOrders)
+        setOrdersOwnerSubject(requestSubject)
+      }
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setOrdersError(error instanceof Error ? error.message : 'Unable to load orders.')
     }).finally(() => {
       if (!controller.signal.aborted) setOrdersLoading(false)
     })
     return () => controller.abort()
-  }, [apiStatus, ordersRevision])
+  }, [apiStatus, authLoading, getAccessTokenSilently, isAuthenticated, ordersRevision, user?.sub])
 
   useEffect(() => {
     const updateActiveSection = () => setActiveSection(window.location.hash.slice(1) || 'trade')
@@ -126,8 +142,8 @@ function App() {
       setOrderError(`The backend does not support ${tradingPair}.`)
       return
     }
-    if (!orderUserId.trim()) {
-      setOrderError('Enter a user ID. This is unverified and is not wallet authentication.')
+    if (!isAuthenticated || authLoading) {
+      setOrderError('Sign in with Auth0 before submitting an order.')
       return
     }
     const quantity = Number(orderQuantity)
@@ -138,17 +154,18 @@ function App() {
     }
     setOrderSubmitting(true)
     try {
+      const accessToken = await getAccessTokenSilently()
+      if (!accessToken) throw new Error('Auth0 did not return an API access token.')
       const savedOrder = await createOrder({
         id: crypto.randomUUID(),
-        user_id: orderUserId.trim(),
         trading_pair: tradingPair,
         side: orderSide,
         order_type: 'Limit',
         price,
         quantity,
-        status: 'Pending',
-      })
+      }, accessToken)
       setOrders((current) => [savedOrder, ...current.filter((item) => item.id !== savedOrder.id)])
+      setOrdersOwnerSubject(user?.sub ?? null)
       setOrderSuccess(`Order submitted. Current backend status: ${savedOrder.status}.`)
       setOrderPanelTab('orders')
       setOrdersRevision((revision) => revision + 1)
@@ -163,12 +180,30 @@ function App() {
     setRefreshingOrderId(id)
     setOrdersError('')
     try {
-      const refreshedOrder = await getOrder(id)
+      const accessToken = await getAccessTokenSilently()
+      if (!accessToken) throw new Error('Auth0 did not return an API access token.')
+      const refreshedOrder = await getOrder(id, accessToken)
       setOrders((current) => current.map((item) => item.id === id ? refreshedOrder : item))
     } catch (error) {
       setOrdersError(error instanceof Error ? error.message : 'Unable to refresh this order.')
     } finally {
       setRefreshingOrderId('')
+    }
+  }
+
+  const removeOrder = async (id: string) => {
+    setCancellingOrderId(id)
+    setOrdersError('')
+    try {
+      const accessToken = await getAccessTokenSilently()
+      if (!accessToken) throw new Error('Auth0 did not return an API access token.')
+      await cancelOrder(id, accessToken)
+      setOrders((current) => current.map((item) => item.id === id ? { ...item, status: 'Cancelled' } : item))
+      setOrdersOwnerSubject(user?.sub ?? null)
+    } catch (error) {
+      setOrdersError(error instanceof Error ? error.message : 'Unable to cancel this order.')
+    } finally {
+      setCancellingOrderId('')
     }
   }
 
@@ -188,7 +223,28 @@ function App() {
         </nav>
         <div className="top-actions">
           <button className="icon-button theme-button" type="button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}>{theme === 'dark' ? '☼' : '◐'}</button>
-          <button className="wallet-button" type="button" disabled title="Wallet integration is not available yet"><span className="status-dot" />Wallet pending</button>
+          <button
+            className="wallet-button"
+            type="button"
+            disabled={authLoading}
+            onClick={async () => {
+              try {
+                if (isAuthenticated) {
+                  await logout({
+                    logoutParams: { returnTo: window.location.origin },
+                  });
+                } else {
+                  await loginWithRedirect();
+                }
+              } catch (error) {
+                console.error("Auth0 login/logout failed:", error);
+              }
+            }}
+          >
+            <span className="status-dot" />
+            {authLoading ? 'Loading…' : isAuthenticated ? 'Log out' : 'Log in'}
+          </button>
+          <button className="wallet-button" type="button" disabled title="Wallet integration is separate from application authentication"><span className="status-dot" />Wallet pending</button>
           <button className="icon-button menu-button" type="button" onClick={() => setMobileMenuOpen((open) => !open)} aria-label={mobileMenuOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileMenuOpen} aria-controls="primary-navigation">{mobileMenuOpen ? '×' : '☰'}</button>
         </div>
       </header>
@@ -265,22 +321,21 @@ function App() {
                 <label className="field-label">Quantity <span>Base amount</span>
                   <div className="field-control"><input required type="number" min="0" step="any" placeholder="0.00" value={orderQuantity} onChange={(event) => setOrderQuantity(event.target.value)} /><span>{baseSymbol}</span></div>
                 </label>
-                <label className="field-label">User ID <span className="unverified-label">Unverified identifier</span>
-                  <input className="text-control" required autoComplete="off" placeholder="Enter an identifier" value={orderUserId} onChange={(event) => setOrderUserId(event.target.value)} />
-                </label>
-                <div className="order-warning">This is not wallet authentication. No signature, balance check, or settlement is performed.</div>
+                <div className="order-warning">Orders are associated with your Auth0 identity. Wallet connection remains separate; no balance check or settlement is performed.</div>
                 {apiStatus !== 'connected' && <p className="feedback error" role="alert">Order entry is unavailable until the backend token API connects.</p>}
+                {!authLoading && !isAuthenticated && <p className="feedback error" role="alert">Sign in with Auth0 to place orders.</p>}
                 {!orderPairSupported && <p className="feedback error" role="alert">This pair is not supported by the order API.</p>}
                 {orderError && <p className="feedback error" role="alert">{orderError}</p>}
                 {orderSuccess && <p className="feedback success" role="status">{orderSuccess}</p>}
-                <button className={`submit-order ${orderSide === 'Sell' ? 'sell-action' : ''}`} type="submit" disabled={orderSubmitting || apiStatus !== 'connected' || !orderPairSupported}>{orderSubmitting ? 'Submitting order…' : `${orderSide} ${tradingPair}`}</button>
+                <button className={`submit-order ${orderSide === 'Sell' ? 'sell-action' : ''}`} type="submit" disabled={orderSubmitting || authLoading || !isAuthenticated || apiStatus !== 'connected' || !orderPairSupported}>{orderSubmitting ? 'Submitting order…' : `${orderSide} ${tradingPair}`}</button>
                 <p className="form-footnote">Market orders are unsupported. API response is authoritative for order status.</p>
               </form> : <div className="open-orders-panel">
                 <div className="panel-heading compact"><div><h2>Open orders</h2><p>Persisted backend records</p></div><button className="text-button" type="button" onClick={reloadOrders} disabled={ordersLoading}>Refresh</button></div>
-                {ordersLoading && <p className="empty-state" role="status">Loading persisted orders…</p>}
+                {ordersLoading && isAuthenticated && <p className="empty-state" role="status">Loading persisted orders…</p>}
                 {ordersError && <p className="feedback error" role="alert">{ordersError}</p>}
-                {!ordersLoading && !ordersError && apiStatus === 'connected' && openOrders.length === 0 && <p className="empty-state">No open orders.</p>}
-                {!ordersLoading && openOrders.slice(0, 8).map((order) => <OrderRow key={order.id} order={order} onRefresh={refreshOrder} refreshing={refreshingOrderId === order.id} compact />)}
+                {!ordersLoading && !ordersError && apiStatus === 'connected' && isAuthenticated && openOrders.length === 0 && <p className="empty-state">No open orders.</p>}
+                {!ordersLoading && isAuthenticated && visibleOrders.length > 0 && openOrders.slice(0, 8).map((order) => <OrderRow key={order.id} order={order} onRefresh={refreshOrder} onCancel={removeOrder} refreshing={refreshingOrderId === order.id} cancelling={cancellingOrderId === order.id} compact />)}
+                {!isAuthenticated && !authLoading && <p className="empty-state">Sign in to view your order history.</p>}
                 {apiStatus !== 'connected' && <p className="empty-state">Backend order history requires an API connection.</p>}
                 <a className="all-orders-link" href="#activity" onClick={() => setActiveSection('activity')}>View all activity <span>→</span></a>
               </div>}
@@ -316,11 +371,13 @@ function App() {
             <div className="filter-control" role="tablist" aria-label="Filter order status">
               {activityFilters.map((filter) => <button type="button" role="tab" aria-selected={activityFilter === filter} className={activityFilter === filter ? 'selected' : ''} key={filter} onClick={() => setActivityFilter(filter)}>{filter}</button>)}
             </div>
-            <div className="activity-source"><span className={`source-dot ${apiStatus === 'connected' ? 'active' : ''}`} />{apiStatus === 'connected' ? 'LIVE API RECORDS' : 'API UNAVAILABLE'}<button className="text-button" type="button" disabled={apiStatus !== 'connected' || ordersLoading} onClick={reloadOrders}>{ordersLoading ? 'Loading…' : 'Refresh'}</button></div>
+            <div className="activity-source"><span className={`source-dot ${apiStatus === 'connected' ? 'active' : ''}`} />{apiStatus === 'connected' ? 'LIVE API RECORDS' : 'API UNAVAILABLE'}<button className="text-button" type="button" disabled={apiStatus !== 'connected' || !isAuthenticated || authLoading || ordersLoading} onClick={reloadOrders}>{ordersLoading ? 'Loading…' : 'Refresh'}</button></div>
           </div>
           {ordersError && <p className="feedback error" role="alert">{ordersError}</p>}
           {apiStatus !== 'connected' && <div className="state-panel"><strong>Order history unavailable</strong><p>Connect to the backend to read persisted orders. Demo trades are intentionally excluded.</p></div>}
-          {apiStatus === 'connected' && ordersLoading && <div className="state-panel" role="status"><strong>Loading order history</strong><p>Fetching persisted orders from the DexSYS API…</p></div>}
+          {apiStatus === 'connected' && !authLoading && !isAuthenticated && <div className="state-panel"><strong>Sign in to view order history</strong><p>Only orders associated with your Auth0 identity are available here.</p></div>}
+          {apiStatus === 'connected' && authLoading && <div className="state-panel" role="status"><strong>Checking sign-in state</strong><p>Waiting for Auth0 authentication…</p></div>}
+          {apiStatus === 'connected' && isAuthenticated && ordersLoading && <div className="state-panel" role="status"><strong>Loading order history</strong><p>Fetching persisted orders from the DexSYS API…</p></div>}
           {apiStatus === 'connected' && !ordersLoading && !ordersError && activityOrders.length === 0 && <div className="state-panel"><strong>No {activityFilter === 'All' ? '' : activityFilter.toLowerCase() + ' '}orders found</strong><p>Orders accepted by the backend will appear here.</p></div>}
           {apiStatus === 'connected' && !ordersLoading && activityOrders.length > 0 && <div className="table-scroll">
             <div className="data-table activity-table">
@@ -360,11 +417,19 @@ function SectionHeading({ eyebrow, title, description }: { eyebrow: string; titl
   return <div className="section-heading"><div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2><p>{description}</p></div></div>
 }
 
-function OrderRow({ order, onRefresh, refreshing, compact = false }: { order: Order; onRefresh: (id: string) => void; refreshing: boolean; compact?: boolean }) {
+function OrderRow({ order, onRefresh, onCancel, refreshing, cancelling, compact = false }: {
+  order: Order
+  onRefresh: (id: string) => void
+  onCancel: (id: string) => void
+  refreshing: boolean
+  cancelling: boolean
+  compact?: boolean
+}) {
   return <div className={`open-order-row ${compact ? 'compact' : ''}`}>
     <div><strong>{order.trading_pair}</strong><span className={order.side === 'Buy' ? 'positive' : 'negative'}>{order.side} · {order.quantity} {order.order_type}</span></div>
     <div><strong>{order.price ?? '—'}</strong><StatusBadge status={order.status} /></div>
     <button className="text-button" type="button" onClick={() => onRefresh(order.id)} disabled={refreshing}>{refreshing ? 'Refreshing…' : 'Refresh'}</button>
+    {order.status === 'Pending' && <button className="text-button" type="button" onClick={() => onCancel(order.id)} disabled={cancelling}>{cancelling ? 'Cancelling…' : 'Cancel'}</button>}
   </div>
 }
 

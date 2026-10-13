@@ -1,6 +1,7 @@
 use std::{env, time::SystemTime};
 
 use api::{
+    auth::Authenticator,
     db,
     matching::{ENGINE_PRICE_SCALE, ENGINE_QUANTITY_SCALE},
     order::{Order, OrderSide, OrderStatus, OrderType},
@@ -13,11 +14,104 @@ use api::{
 };
 use axum::{
     body::{Body, to_bytes},
-    http::{Request, StatusCode},
+    http::{Request, StatusCode, header::AUTHORIZATION},
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use rand::thread_rng;
+use rsa::{
+    RsaPrivateKey,
+    pkcs1v15::SigningKey,
+    signature::{SignatureEncoding, Signer},
+    traits::PublicKeyParts,
+};
+use serde::Serialize;
 use serde_json::{Value, json};
+use sha2::Sha256;
 use sqlx::{Row, postgres::PgPoolOptions};
 use tower::ServiceExt;
+
+const TEST_ISSUER: &str = "https://dexsys-test.auth0.local/";
+const TEST_AUDIENCE: &str = "https://api.dexsys.local";
+const TEST_KID: &str = "dexsys-test-key";
+
+struct TestAuth {
+    authenticator: Authenticator,
+    signing_key: SigningKey<Sha256>,
+}
+
+#[derive(Serialize)]
+struct TestClaims<'a> {
+    iss: &'a str,
+    aud: &'a str,
+    exp: u64,
+    sub: &'a str,
+}
+
+async fn test_auth() -> TestAuth {
+    let private_key =
+        RsaPrivateKey::new(&mut thread_rng(), 2048).expect("generate ephemeral test RSA key");
+    let public_key = private_key.to_public_key();
+    let jwks = axum::Json(json!({
+        "keys": [{
+            "kty": "RSA",
+            "kid": TEST_KID,
+            "alg": "RS256",
+            "use": "sig",
+            "n": URL_SAFE_NO_PAD.encode(public_key.n().to_bytes_be()),
+            "e": URL_SAFE_NO_PAD.encode(public_key.e().to_bytes_be())
+        }]
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind local test JWKS listener");
+    let address = listener.local_addr().unwrap();
+    let app = axum::Router::new().route(
+        "/jwks",
+        axum::routing::get(move || {
+            let jwks = jwks.clone();
+            async move { jwks }
+        }),
+    );
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve local test JWKS");
+    });
+    TestAuth {
+        authenticator: Authenticator::new(
+            TEST_ISSUER.to_owned(),
+            TEST_AUDIENCE.to_owned(),
+            format!("http://{address}/jwks"),
+        )
+        .unwrap(),
+        signing_key: SigningKey::<Sha256>::new(private_key),
+    }
+}
+
+impl TestAuth {
+    fn token(&self, subject: &str) -> String {
+        let claims = TestClaims {
+            iss: TEST_ISSUER,
+            aud: TEST_AUDIENCE,
+            exp: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 60,
+            sub: subject,
+        };
+        let header = URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&json!({"alg": "RS256", "typ": "JWT", "kid": TEST_KID})).unwrap(),
+        );
+        let claims = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
+        let signing_input = format!("{header}.{claims}");
+        let signature = self.signing_key.sign(signing_input.as_bytes());
+        format!(
+            "{signing_input}.{}",
+            URL_SAFE_NO_PAD.encode(signature.to_bytes())
+        )
+    }
+}
 
 fn test_database_url() -> String {
     let url = env::var("DEXSYS_TEST_DATABASE_URL")
@@ -48,6 +142,7 @@ fn limit_order(id: &str, pair: &str, side: OrderSide, price: f64, quantity: f64)
     Order {
         id: id.to_owned(),
         user_id: format!("test-user-{id}"),
+        owner_principal_id: None,
         trading_pair: pair.to_owned(),
         side,
         order_type: OrderType::Limit,
@@ -57,7 +152,11 @@ fn limit_order(id: &str, pair: &str, side: OrderSide, price: f64, quantity: f64)
     }
 }
 
-async fn submit_order(app: &axum::Router, order: &Order) -> (StatusCode, Value) {
+async fn submit_order(
+    app: &axum::Router,
+    order: &Order,
+    access_token: &str,
+) -> (StatusCode, Value) {
     let response = app
         .clone()
         .oneshot(
@@ -65,6 +164,7 @@ async fn submit_order(app: &axum::Router, order: &Order) -> (StatusCode, Value) 
                 .method("POST")
                 .uri("/orders")
                 .header("content-type", "application/json")
+                .header(AUTHORIZATION, format!("Bearer {access_token}"))
                 .body(Body::from(serde_json::to_vec(order).unwrap()))
                 .unwrap(),
         )
@@ -120,7 +220,10 @@ async fn postgres_persistence_and_api_lifecycle() {
     assert!(token.validated);
     assert_eq!(token.price, 3500.0);
 
-    let app = routes::router().with_state(AppState::new(pool.clone()));
+    let auth = test_auth().await;
+    let owner_token = auth.token("auth0|owner");
+    let other_token = auth.token("auth0|other");
+    let app = routes::router(auth.authenticator.clone()).with_state(AppState::new(pool.clone()));
     let response = app
         .clone()
         .oneshot(
@@ -225,16 +328,85 @@ async fn postgres_persistence_and_api_lifecycle() {
 
     let route_order_id = format!("api-order-{suffix}");
     let request_order = limit_order(&route_order_id, "ETH/BTC", OrderSide::Buy, 10.25, 0.5);
-    let (status, response) = submit_order(&app, &request_order).await;
+    let (status, response) = submit_order(&app, &request_order, &owner_token).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(response["status"], "Pending");
     assert_eq!(response["quantity"], 0.5);
+    assert_ne!(response["user_id"], request_order.user_id);
+
+    let other_order_id = format!("other-api-order-{suffix}");
+    let (other_status, _) = submit_order(
+        &app,
+        &limit_order(&other_order_id, "ETH/BTC", OrderSide::Sell, 10.50, 0.5),
+        &other_token,
+    )
+    .await;
+    assert_eq!(other_status, StatusCode::OK);
+
+    let other_list = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/orders")
+                .header(AUTHORIZATION, format!("Bearer {other_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(other_list.status(), StatusCode::OK);
+    let other_orders: Value =
+        serde_json::from_slice(&to_bytes(other_list.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    assert!(
+        other_orders
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|order| order["id"] == other_order_id)
+    );
+    assert!(
+        !other_orders
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|order| order["id"] == route_order_id)
+    );
+
+    let cross_user_read = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/orders/{route_order_id}"))
+                .header(AUTHORIZATION, format!("Bearer {other_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cross_user_read.status(), StatusCode::NOT_FOUND);
+
+    let cross_user_cancel = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/orders/{route_order_id}"))
+                .header(AUTHORIZATION, format!("Bearer {other_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cross_user_cancel.status(), StatusCode::NOT_FOUND);
+    assert_eq!(stored_order(&pool, &route_order_id).await.0, "PENDING");
 
     let fetched = app
         .clone()
         .oneshot(
             Request::builder()
                 .uri(format!("/orders/{route_order_id}"))
+                .header(AUTHORIZATION, format!("Bearer {owner_token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -251,6 +423,7 @@ async fn postgres_persistence_and_api_lifecycle() {
             Request::builder()
                 .method("DELETE")
                 .uri(format!("/orders/{route_order_id}"))
+                .header(AUTHORIZATION, format!("Bearer {owner_token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -263,6 +436,7 @@ async fn postgres_persistence_and_api_lifecycle() {
             Request::builder()
                 .method("DELETE")
                 .uri(format!("/orders/{route_order_id}"))
+                .header(AUTHORIZATION, format!("Bearer {owner_token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -430,7 +604,9 @@ async fn matching_executions_and_order_states_are_persisted() {
     )
     .await
     .expect("create matching test pair");
-    let app = routes::router().with_state(
+    let auth = test_auth().await;
+    let access_token = auth.token("auth0|matching-test");
+    let app = routes::router(auth.authenticator.clone()).with_state(
         AppState::restore(pool.clone())
             .await
             .expect("restore persisted limit orders into in-memory books"),
@@ -441,12 +617,14 @@ async fn matching_executions_and_order_states_are_persisted() {
     let (status, _) = submit_order(
         &app,
         &limit_order(&resting_sell_id, &pair, OrderSide::Sell, 700.0, 1.25),
+        &access_token,
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     let (status, response) = submit_order(
         &app,
         &limit_order(&noncross_buy_id, &pair, OrderSide::Buy, 699.0, 0.5),
+        &access_token,
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -476,6 +654,7 @@ async fn matching_executions_and_order_states_are_persisted() {
                 Request::builder()
                     .method("DELETE")
                     .uri(format!("/orders/{order_id}"))
+                    .header(AUTHORIZATION, format!("Bearer {access_token}"))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -489,10 +668,11 @@ async fn matching_executions_and_order_states_are_persisted() {
     submit_order(
         &app,
         &limit_order(&partial_maker_id, &pair, OrderSide::Sell, 800.0, 1.0),
+        &access_token,
     )
     .await;
     let partial_taker = limit_order(&partial_taker_id, &pair, OrderSide::Buy, 800.0, 0.4);
-    let (status, response) = submit_order(&app, &partial_taker).await;
+    let (status, response) = submit_order(&app, &partial_taker, &access_token).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(response["status"], "Filled");
     assert_eq!(
@@ -524,6 +704,7 @@ async fn matching_executions_and_order_states_are_persisted() {
             Request::builder()
                 .method("DELETE")
                 .uri(format!("/orders/{partial_maker_id}"))
+                .header(AUTHORIZATION, format!("Bearer {access_token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -536,11 +717,13 @@ async fn matching_executions_and_order_states_are_persisted() {
     submit_order(
         &app,
         &limit_order(&full_maker_id, &pair, OrderSide::Sell, 900.0, 0.5),
+        &access_token,
     )
     .await;
     let (status, response) = submit_order(
         &app,
         &limit_order(&full_taker_id, &pair, OrderSide::Buy, 900.0, 0.5),
+        &access_token,
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -560,16 +743,19 @@ async fn matching_executions_and_order_states_are_persisted() {
     submit_order(
         &app,
         &limit_order(&first_maker_id, &pair, OrderSide::Sell, 1_000.0, 0.2),
+        &access_token,
     )
     .await;
     submit_order(
         &app,
         &limit_order(&second_maker_id, &pair, OrderSide::Sell, 1_001.0, 0.3),
+        &access_token,
     )
     .await;
     let (status, response) = submit_order(
         &app,
         &limit_order(&multi_taker_id, &pair, OrderSide::Buy, 1_001.0, 0.5),
+        &access_token,
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -606,11 +792,13 @@ async fn matching_executions_and_order_states_are_persisted() {
     submit_order(
         &app,
         &limit_order(&reverse_maker_id, &pair, OrderSide::Buy, 1_100.0, 0.3),
+        &access_token,
     )
     .await;
     let (status, response) = submit_order(
         &app,
         &limit_order(&reverse_taker_id, &pair, OrderSide::Sell, 1_100.0, 0.3),
+        &access_token,
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -649,7 +837,7 @@ async fn matching_executions_and_order_states_are_persisted() {
     )
     .await
     .expect("persist second same-price FIFO order");
-    let restored_app = routes::router().with_state(
+    let restored_app = routes::router(auth.authenticator.clone()).with_state(
         AppState::restore(pool.clone())
             .await
             .expect("restore the persisted FIFO sequence"),
@@ -658,6 +846,7 @@ async fn matching_executions_and_order_states_are_persisted() {
     let (status, response) = submit_order(
         &restored_app,
         &limit_order(&fifo_taker_id, &pair, OrderSide::Buy, 1_200.0, 0.25),
+        &access_token,
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -682,7 +871,7 @@ async fn matching_executions_and_order_states_are_persisted() {
     let mut market_order = limit_order(&market_id, &pair, OrderSide::Buy, 0.0, 0.2);
     market_order.order_type = OrderType::Market;
     market_order.price = None;
-    let (status, _) = submit_order(&app, &market_order).await;
+    let (status, _) = submit_order(&app, &market_order, &access_token).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let market_records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM orders WHERE id = $1")
         .bind(&market_id)
@@ -700,27 +889,191 @@ async fn matching_executions_and_order_states_are_persisted() {
 #[ignore = "requires DEXSYS_TEST_DATABASE_URL pointing to a dedicated database ending in _test"]
 async fn matching_persistence_failure_does_not_mutate_live_orderbook() {
     let url = test_database_url();
-    let pool = PgPoolOptions::new()
-        .connect_lazy(&url)
-        .expect("parse isolated test database URL");
-    pool.close().await;
-    let state = AppState::new(pool);
-    let app = routes::router().with_state(state.clone());
+    let pool = db::connect(&url)
+        .await
+        .expect("connect to isolated test database");
+    sqlx::migrate!("../../migrations")
+        .run(&pool)
+        .await
+        .expect("apply SQLx migrations");
+    repository::seed_demo_data(&pool)
+        .await
+        .expect("seed demo data");
+    let auth = test_auth().await;
+    let access_token = auth.token("auth0|failed-persistence-test");
+    let state = AppState::new(pool.clone());
+    let app = routes::router(auth.authenticator).with_state(state.clone());
     let order_id = format!("failed-persistence-{}", unique_suffix());
+    let unavailable_pair = format!("missing-pair-{}", unique_suffix());
     let (status, _) = submit_order(
         &app,
-        &limit_order(&order_id, "ETH/BTC", OrderSide::Buy, 1_200.0, 0.3),
+        &limit_order(&order_id, &unavailable_pair, OrderSide::Buy, 1_200.0, 0.3),
+        &access_token,
     )
     .await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     let engines = state.matching_engines.lock().await;
-    let engine = engines.get("ETH/BTC").expect("pair engine was initialized");
-    assert!(
-        engine
-            .orderbook
-            .bids
-            .values()
-            .flat_map(|level| &level.orders)
-            .all(|order| order.id != order_id)
-    );
+    let engine = engines
+        .get(&unavailable_pair)
+        .expect("pair engine was initialized");
+    assert!(engine.orderbook.bids.is_empty());
+    let persisted_order: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM orders WHERE id = $1)")
+            .bind(&order_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!persisted_order);
+    pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires DEXSYS_TEST_DATABASE_URL pointing to a dedicated database ending in _test"]
+async fn cancellation_persistence_failure_preserves_pending_order() {
+    let url = test_database_url();
+    let pool = db::connect(&url)
+        .await
+        .expect("connect to isolated test database");
+    sqlx::migrate!("../../migrations")
+        .run(&pool)
+        .await
+        .expect("apply SQLx migrations");
+    repository::seed_demo_data(&pool)
+        .await
+        .expect("seed demo data");
+
+    let auth = test_auth().await;
+    let subject = "auth0|failed-cancellation-test";
+    let access_token = auth.token(subject);
+    let state = AppState::new(pool.clone());
+    let app = routes::router(auth.authenticator).with_state(state.clone());
+    let order_id = format!("failed-cancellation-{}", unique_suffix());
+    let order = limit_order(&order_id, "ETH/BTC", OrderSide::Buy, 1_200.0, 0.3);
+
+    let (status, response) = submit_order(&app, &order, &access_token).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(response["status"], "Pending");
+
+    let principal_id = repository::get_principal_id(&pool, TEST_ISSUER, subject)
+        .await
+        .expect("authenticated principal was created");
+    let stored_owner: i64 =
+        sqlx::query_scalar("SELECT owner_principal_id FROM orders WHERE id = $1")
+            .bind(&order_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(stored_owner, principal_id);
+
+    let engine_price = api::matching::api_number_to_engine(1_200.0, ENGINE_PRICE_SCALE).unwrap();
+    let engine_quantity = api::matching::api_number_to_engine(0.3, ENGINE_QUANTITY_SCALE).unwrap();
+    {
+        let engines = state.matching_engines.lock().await;
+        let engine = engines.get("ETH/BTC").expect("pair engine was initialized");
+        assert!(
+            engine
+                .orderbook
+                .bids
+                .get(&engine_price)
+                .is_some_and(|level| {
+                    level
+                        .orders
+                        .iter()
+                        .any(|entry| entry.id == order_id && entry.quantity == engine_quantity)
+                })
+        );
+    }
+
+    let trigger_suffix = unique_suffix();
+    let function_name = format!("reject_order_cancel_{trigger_suffix}");
+    let trigger_name = format!("reject_order_cancel_{trigger_suffix}");
+    let test_pool = pool.clone();
+    let test_app = app.clone();
+    let test_state = state.clone();
+    let test_order_id = order_id.clone();
+    let test_access_token = access_token.clone();
+    let test_function_name = function_name.clone();
+    let test_trigger_name = trigger_name.clone();
+    let test = tokio::spawn(async move {
+        let pool = test_pool;
+        let app = test_app;
+        let state = test_state;
+        let order_id = test_order_id;
+        let access_token = test_access_token;
+        let function_name = test_function_name;
+        let trigger_name = test_trigger_name;
+        sqlx::query(&format!(
+            "CREATE FUNCTION {function_name}() RETURNS trigger
+         LANGUAGE plpgsql AS $$
+         BEGIN
+             RAISE EXCEPTION 'injected cancellation persistence failure';
+         END;
+         $$"
+        ))
+        .execute(&pool)
+        .await
+        .expect("create deterministic cancellation failure function");
+        sqlx::query(&format!(
+            "CREATE TRIGGER {trigger_name}
+         BEFORE UPDATE OF status ON orders
+         FOR EACH ROW
+         WHEN (OLD.id = '{order_id}' AND NEW.status = 'CANCELLED')
+         EXECUTE FUNCTION {function_name}()"
+        ))
+        .execute(&pool)
+        .await
+        .expect("create order-scoped cancellation failure trigger");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/orders/{order_id}"))
+                    .header(AUTHORIZATION, format!("Bearer {access_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        {
+            let engines = state.matching_engines.lock().await;
+            let engine = engines
+                .get("ETH/BTC")
+                .expect("pair engine remains available");
+            assert!(
+                engine
+                    .orderbook
+                    .bids
+                    .get(&engine_price)
+                    .is_some_and(|level| {
+                        level
+                            .orders
+                            .iter()
+                            .any(|entry| entry.id == order_id && entry.quantity == engine_quantity)
+                    })
+            );
+        }
+        assert_eq!(
+            stored_order(&pool, &order_id).await,
+            ("PENDING".into(), 0.3)
+        );
+    })
+    .await;
+
+    let trigger_cleanup = sqlx::query(&format!("DROP TRIGGER IF EXISTS {trigger_name} ON orders"))
+        .execute(&pool)
+        .await;
+    let function_cleanup = sqlx::query(&format!("DROP FUNCTION IF EXISTS {function_name}()"))
+        .execute(&pool)
+        .await;
+    trigger_cleanup.expect("drop cancellation failure trigger");
+    function_cleanup.expect("drop cancellation failure function");
+    match test {
+        Ok(()) => {}
+        Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
+        Err(error) => panic!("cancellation failure test task did not complete: {error}"),
+    }
+    pool.close().await;
 }

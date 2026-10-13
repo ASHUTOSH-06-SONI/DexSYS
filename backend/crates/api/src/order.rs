@@ -25,6 +25,8 @@ pub enum OrderStatus {
 pub struct Order {
     pub id: String,
     pub user_id: String,
+    #[serde(skip)]
+    pub owner_principal_id: Option<i64>,
     pub trading_pair: String,
     pub side: OrderSide,
     pub order_type: OrderType,
@@ -66,6 +68,7 @@ mod tests {
         Order {
             id: "order".into(),
             user_id: "wallet".into(),
+            owner_principal_id: None,
             trading_pair: "ETH/BTC".into(),
             side: OrderSide::Buy,
             order_type: OrderType::Limit,

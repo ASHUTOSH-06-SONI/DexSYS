@@ -1,4 +1,4 @@
-import { getJson, postJson } from './apiClient'
+import { deleteNoContent, getJson, postJson } from './apiClient'
 
 export type ApiOrderSide = 'Buy' | 'Sell'
 export type ApiOrderType = 'Limit' | 'Market'
@@ -17,13 +17,11 @@ export interface Order {
 
 export interface CreateOrder {
   id: string
-  user_id: string
   trading_pair: string
   side: ApiOrderSide
   order_type: ApiOrderType
   price: number | null
   quantity: number
-  status: 'Pending'
 }
 
 function isOrder(value: unknown): value is Order {
@@ -49,17 +47,21 @@ function parseOrders(value: unknown): Order[] {
   return value.map(parseOrder)
 }
 
-export function listOrders(signal?: AbortSignal): Promise<Order[]> {
-  return getJson('/orders', parseOrders, signal)
+export function listOrders(accessToken: string, signal?: AbortSignal): Promise<Order[]> {
+  return getJson('/orders', parseOrders, signal, accessToken)
 }
 
-export function getOrder(id: string, signal?: AbortSignal): Promise<Order> {
-  return getJson(`/orders/${encodeURIComponent(id)}`, parseOrder, signal)
+export function getOrder(id: string, accessToken: string, signal?: AbortSignal): Promise<Order> {
+  return getJson(`/orders/${encodeURIComponent(id)}`, parseOrder, signal, accessToken)
 }
 
-export function createOrder(order: CreateOrder, signal?: AbortSignal): Promise<Order> {
+export function createOrder(order: CreateOrder, accessToken: string, signal?: AbortSignal): Promise<Order> {
   if (order.order_type === 'Market') {
     return Promise.reject(new Error('Market orders are not supported by the backend.'))
   }
-  return postJson('/orders', order, parseOrder, signal)
+  return postJson('/orders', order, parseOrder, signal, accessToken)
+}
+
+export function cancelOrder(id: string, accessToken: string, signal?: AbortSignal): Promise<void> {
+  return deleteNoContent(`/orders/${encodeURIComponent(id)}`, accessToken, signal)
 }
