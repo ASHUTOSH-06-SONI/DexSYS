@@ -45,14 +45,15 @@ export default defineConfig([
   - `src/data/demoData.ts` contains clearly identified representative fallback tokens and sample activity.
   - `src/services/apiClient.ts` handles JSON requests, HTTP errors, network failures, and response parsing.
   - `src/services/tokenService.ts` validates and maps the Rust token response into the UI token type.
+  - `src/services/marketDataService.ts` loads public USD spot prices and 24-hour changes from CoinGecko.
   - `src/domain/swapQuote.ts` calculates a local indicative quote from displayed prices. It does not submit an order.
   - `src/types.ts` contains shared frontend view types.
 
   Theme preference is stored in `localStorage`. Trade selection, filters, amounts, and API request state stay in React component state; there is no global state library or API cache.
 
-  ## Token API integration
+  ## Token and price data
 
-  The only implemented market-data endpoint is `GET /tokens/{symbol}`. There is no token-list or market-list endpoint, so the frontend requests the two symbols currently seeded in `backend/crates/api/src/state.rs`: `ETH` and `BTC`.
+  The frontend uses the existing `GET /tokens/{symbol}` route for DexSYS token metadata. There is no token-list or market-list endpoint, so it requests the two symbols seeded by the backend: `ETH` and `BTC`. The endpoint's `price`, `change_24h`, and `balance` values are seeded demo values, not live market quotes or wallet balances.
 
   Successful responses have this shape:
 
@@ -71,7 +72,9 @@ export default defineConfig([
 
   Unknown symbols return HTTP `404` with `{"error":"Token Not Found"}`. The client validates response fields and displays loading, connected, or unavailable states. If the request fails or the response is malformed, it visibly identifies the representative demo data and provides a retry action; it does not describe fallback data as backend data.
 
-  The current Rust `AppState` seeds these response values in memory. They are not live market prices or wallet balances. The API has no token-list route, market history, quote endpoint, or WebSocket market feed.
+  Current USD prices and 24-hour changes come from CoinGecko's public `/api/v3/simple/price` endpoint, mapped for ETH, BTC, USDC, and WBTC. The frontend refreshes every 60 seconds, displays loading/error states, retains the last successful quote as stale when a refresh fails, and exposes a retry action. CoinGecko is a separate market-data source; a live spot USD conversion for the selected pair is calculated from those token prices, not supplied by the DexSYS matching API.
+
+  Static/demo-only surfaces are intentionally distinct: `src/data/demoData.ts` contains fallback prices and sample balances used when token metadata cannot load; backend token prices and balances are seeded in `backend/crates/api/src/repository.rs`; and `src/domain/orderBook.ts` contains a hard-coded demo order-book fixture that is not rendered as live depth. The UI labels fallback prices, sample balances, and unavailable volume/history/order-book data. The DexSYS API still has no token-list route, market history, quote endpoint, order-book endpoint, or WebSocket market feed.
 
   ## Other backend contracts
 
@@ -96,12 +99,13 @@ export default defineConfig([
 
   - Responsive exchange UI, persistent light/dark theme, market selection/search/filtering, and sample activity views.
   - Token metadata loading from the existing Rust token route for its currently seeded symbols.
-  - Explicit API loading/error states and labeled representative demo fallback.
+  - Explicit token API loading/error states and labeled representative demo fallback.
+  - CoinGecko spot USD prices and 24-hour changes with periodic refresh, stale-data handling, and provider error/retry states.
   - Local quote calculation and review preview only.
 
   ### Backend integration pending
 
-  - Token listing, live market/quote/history feeds, authenticated user portfolio, and persistent order history.
+  - Token listing, pair-specific executable quotes, historical chart data, authenticated user portfolio, and persistent order history.
   - Full order matching lifecycle and settlement integrations.
   - Orderbook API and matching-engine implementation.
 
