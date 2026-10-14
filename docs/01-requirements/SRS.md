@@ -1,68 +1,39 @@
-# Software Requirements Specification (SRS)
+# Software Requirements Specification
 
-**Project Name:** DexSYS
+**Project:** DexSYS academic software-engineering MVP
+**Baseline:** Repository `main`, inspected 14 October 2026
+**Status:** As-built specification; implementation is a test-environment prototype
 
-**Version:** 1.0
+## Purpose and audience
 
-**Authors:** Ashutosh Soni
+This specification records the observable requirements implemented by the current repository and separates them from the project's broader DEX ambitions. It is for project evaluators, developers, testers, and maintainers. Requirement IDs and their implementation/test evidence are in [functional requirements](./functional-requirements.md); quality constraints are in [non-functional requirements](./non-functional-requirements.md).
 
-**Course:** Software Engineering (23CCE302)
+## System boundary
 
-**Status:** Draft
+The MVP is a browser client, an Axum HTTP API, PostgreSQL persistence, and an in-process Rust limit-order matcher. Auth0 access tokens identify API users. External market data comes directly from Binance's public ETHBTC ticker WebSocket and CoinGecko's public USD-price REST endpoint. A standalone Solidity `SettlementVault` accepts and returns native ETH, but no order/trade path calls it.
 
-**Last Updated:** August 2026
+The order book is an off-chain prototype. A database record marked `Filled` or an engine-produced row in `trades` means the Rust matcher recorded a simulated execution; it does **not** mean assets were transferred or settled on-chain. This distinction is fundamental to every MVP claim.
 
----
-# 1. Introduction
-## 1.1 Purpose
+## Delivered capabilities
 
-This Software Requirements Specification (SRS) defines the functional and non-functional requirements for **DexSYS**, a hybrid decentralized exchange (DEX) platform.
+- Public health and individual token metadata reads.
+- Auth0-authenticated order create, list, get, and cancel routes scoped to issuer/subject.
+- Limit-order matching in memory for seeded `ETH/BTC` and `BTC/ETH` pairs, with PostgreSQL records and engine-produced executions.
+- Browser order entry and persisted order history; token search/filtering and external reference prices.
+- Standalone ETH deposit/withdrawal vault with Hardhat tests.
 
-The objective of this document is to establish a clear and complete understanding of the system requirements before implementation begins. It serves as the primary reference for system design, development, testing, deployment, and future maintenance throughout the software development lifecycle.
+## Explicitly outside the delivered system
 
-The document is intended to ensure that all stakeholders share a common understanding of the project's goals, scope, and expected functionality.
+There is no wallet provider/signing, wallet balance verification, balance reservation, AMM, on-chain trade settlement, contract/API integration, public orderbook/trades API, historical chart feed, live depth feed, or volume feed. Token balances and backend USD values are seeded reference values. Deployment and automated CI are not configured in this repository.
 
+## Operating assumptions and constraints
 
-## 1.2 Scope
+- Local API startup requires PostgreSQL and valid Auth0 tenant configuration; the frontend requires an Auth0 SPA/API setup for sign-in and order features.
+- Native Rust, Node.js, and PostgreSQL development is supported; Docker is not a prerequisite.
+- API amounts are JSON numbers (`f64`); matching accepts only values exactly representable at the documented fixed-point scales.
+- The service binds to `127.0.0.1:8080`; local Vite development proxies `/api` to it.
+- External market providers are independent of DexSYS order execution and availability.
 
-DexSYS is a hybrid decentralized exchange platform that enables secure peer-to-peer trading of blockchain-based digital assets.
+## Traceability
 
-The platform combines an off-chain high-performance trading engine with on-chain smart contract settlement to provide secure, transparent, and efficient cryptocurrency trading.
-
-The system supports multiple trading mechanisms including:
-
-- Order Book Trading
-- Automated Market Maker (AMM) Token Swaps
-- Liquidity Pool Management
-- Wallet-based Authentication
-- Portfolio Management
-- Governance Mechanisms
-
-The primary objective of the MVP is to demonstrate a production-inspired decentralized exchange architecture while following modern software engineering principles.
-
-## 1.3 Objectives
-
-The objectives of DexSYS are to:
-
-- Enable secure decentralized digital asset trading.
-- Maintain user custody of digital assets during trading.
-- Provide low-latency off-chain order matching.
-- Execute trustless on-chain trade settlement.
-- Support both order book trading and AMM-based token swaps.
-- Demonstrate modular and scalable software architecture.
-- Serve as a comprehensive academic software engineering project following industry-standard development practices.
-
-## 1.4 Intended Audience
-
-This document is intended for:
-
-- Project Developers
-- Software Engineering Instructors
-- Project Evaluators
-- Future Contributors
-- Test Engineers
-- System Maintainers
-
-## 1.5 Definitions
-
-Key terminology used throughout this document is defined in the accompanying **Glossary** document located at: docs/01-requirements/glossary.md
+See [FR/NFR traceability](./functional-requirements.md#traceability-notes) for each delivered requirement's source and automated test evidence. Feature ideas beyond this baseline are identified as **not implemented** rather than implied by this SRS.
