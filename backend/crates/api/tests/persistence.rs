@@ -199,6 +199,41 @@ async fn stored_order(pool: &sqlx::PgPool, id: &str) -> (String, f64) {
 }
 
 #[tokio::test]
+async fn order_routes_reject_requests_without_authentication() {
+    let auth = test_auth().await;
+    let pool = PgPoolOptions::new()
+        .connect_lazy("postgres://test:test@127.0.0.1:1/dexsys_test")
+        .expect("parse isolated lazy PostgreSQL URL");
+    let app = routes::router(auth.authenticator).with_state(AppState::new(pool.clone()));
+
+    for (method, uri) in [
+        ("GET", "/orders"),
+        ("POST", "/orders"),
+        ("GET", "/orders/order-id"),
+        ("DELETE", "/orders/order-id"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "{method} {uri}"
+        );
+    }
+
+    pool.close().await;
+}
+
+#[tokio::test]
 #[ignore = "requires DEXSYS_TEST_DATABASE_URL pointing to a dedicated database ending in _test"]
 async fn postgres_persistence_and_api_lifecycle() {
     let url = test_database_url();
@@ -450,6 +485,29 @@ async fn postgres_persistence_and_api_lifecycle() {
             .status,
         OrderStatus::Cancelled
     ));
+    let restored_app = routes::router(auth.authenticator.clone()).with_state(
+        AppState::restore(pool.clone())
+            .await
+            .expect("restore persisted order state after backend restart"),
+    );
+    let restored_order = restored_app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/orders/{route_order_id}"))
+                .header(AUTHORIZATION, format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(restored_order.status(), StatusCode::OK);
+    let restored_order: Value = serde_json::from_slice(
+        &to_bytes(restored_order.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(restored_order["status"], "Cancelled");
 
     repository::update_order_remaining_quantity(&pool, &buy_id, 0.25, OrderStatus::Pending)
         .await
