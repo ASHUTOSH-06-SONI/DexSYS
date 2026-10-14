@@ -1,10 +1,17 @@
-# Trades API
+# API inventory: health, tokens, and trades
 
-## Overview
+## Implemented public routes
 
-The Trades API provides access to trade-related information in the DexSYS backend. It is used to retrieve details about executed trades and their associated market information.
+| Method and path | Authentication | Success response |
+|---|---|---|
+| `GET /` | None | `200` JSON `{ "service": "DexSYS API", "version": "0.1.0", "status": "running" }` |
+| `GET /health` | None | Same health JSON |
+| `GET /tokens/{symbol}` | None | `200` JSON `TokenInfo`: `symbol`, `name`, `validated`, `price`, `change_24h`, `balance`, `contract_address`, `supported_pairs` |
 
-## Endpoint
+Unknown token symbols return `404` `{ "error": "Token Not Found" }`; persistence failures return `500`. Seeded token fields are demo/reference data; `balance` is not a wallet balance. There is no token-list route.
 
-```http
-GET /api/trades
+## Trades
+
+There is **no implemented `GET /trades` or trade-history HTTP endpoint**. The matching code persists a `trades` row for each engine-produced execution as part of the order transaction. These rows are not blockchain-confirmed executions, and settlement status is not exposed by an API. Do not call a `trades` endpoint from clients; it will not be served.
+
+See [orders](./orders.md) for the implemented order routes and [external market data](./websocket.md) for provider feeds, which are not trade routes.

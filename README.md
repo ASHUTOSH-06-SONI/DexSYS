@@ -1,405 +1,127 @@
 # DexSYS
 
-DexSYS is a decentralized exchange (DEX) prototype built as a full-stack project with a Rust API backend, a React + TypeScript trading interface, and a Solidity/Hardhat contract workspace. The backend persists and matches submitted limit orders in its in-memory engine, while the frontend provides API-backed order entry and history alongside clearly labelled preview data.
+DexSYS is an academic software-engineering MVP demonstrating a browser trading interface, an Auth0-scoped Rust order API, PostgreSQL persistence, an in-process limit-order matcher, external reference market data, and a separately tested Solidity vault.
 
-## Project status
+> **Important status:** The order-book prototype works as an off-chain matching and persistence demonstration. It is **not an on-chain-settled exchange**. `SettlementVault` has standalone Hardhat tests, but is not integrated with frontend/API orders. Deployment is future work; only local development commands are documented and testable.
 
-Current implementation highlights:
+## Current implementation status
 
-- Rust Axum backend serving health, PostgreSQL-backed token metadata, and order endpoints
-- SQLx migrations and PostgreSQL repositories for tokens, trading pairs, orders, trades, settlements, and audit events
-- React/Vite frontend that renders a token swap workspace, price cards, and activity views
-- Seeded token data for ETH and BTC with fallback demo values when the API is unavailable
-- Orderbook and matching-engine crates in Rust process API-submitted orders in memory
-- Solidity contract workspace prepared for a future settlement layer
+| Capability | Status |
+|---|---|
+| Rust Axum health and individual token metadata endpoints | Implemented; token metadata is seeded/reference data |
+| Auth0 access-token validation and user-scoped orders | Implemented for order routes |
+| ETH/BTC and BTC/ETH limit-order entry, matching, persistence and cancel | Implemented as a local off-chain prototype; engine state is in-process |
+| ETHBTC market spot ticker and reciprocal BTC/ETH display | Implemented via public Binance WebSocket |
+| USD references and 24-hour changes | Implemented via public CoinGecko REST |
+| Native ETH `SettlementVault` deposit/withdrawal | Implemented/tested standalone; no app integration |
+| Wallet connect/signing, wallet balance, balance reservation, on-chain trade settlement | Not implemented |
+| AMM, public orderbook/trade-history API, historical chart, live depth, volume | Not implemented |
+| Production deployment, Docker/Compose, CI/CD | Not configured |
 
-Current gaps:
+See the [SRS](./docs/01-requirements/SRS.md) and [functional requirements/traceability](./docs/01-requirements/functional-requirements.md) for the as-built boundary.
 
-- Auth0 OIDC application authentication for order endpoints; wallet identity remains separate
-- No blockchain settlement or on-chain confirmation flow
-- No live orderbook feed or historical chart data
-- The trading interface receives ETH/BTC spot ticks from Binance's public WebSocket stream; CoinGecko REST remains the source for USD references and 24-hour changes
-- No wallet signing, SIWE, balance, or settlement verification
+## Architecture
 
-Order endpoints require a valid Auth0 access token for the API audience `https://api.dexsys.local`. Configure the frontend `VITE_AUTH0_DOMAIN`, `VITE_AUTH0_CLIENT_ID`, and `VITE_AUTH0_AUDIENCE`, and the backend `AUTH0_DOMAIN` (optionally `AUTH0_AUDIENCE`). Orders are linked to a trusted issuer/subject principal; existing rows remain unassigned until separately verified and mapped.
+```text
+Browser (React/Vite)
+  ├── Vite /api proxy ──> Rust Axum API (127.0.0.1:8080)
+  │                         ├── PostgreSQL (SQLx migrations/repositories)
+  │                         └── per-pair in-memory matching engine
+  ├── Auth0 SPA / access token (orders only)
+  ├── Binance public ETHBTC WebSocket (spot ticker)
+  └── CoinGecko public REST (USD reference prices)
 
-## Architecture overview
+Hardhat/Solidity SettlementVault ── standalone; not connected to order flow
+```
 
-The repository is organized into four main areas:
-
-- `backend/` — Rust workspace containing the Axum API and supporting crates
-- `frontend/` — React + TypeScript trading interface
-- `contracts/` — Solidity/Hardhat wallet and settlement foundation
-- `docs/` — project requirements, design, API docs, and deployment notes
-
-## Tech stack
-
-Backend:
-
-- Rust
-- Axum web framework
-- Tokio async runtime
-- PostgreSQL with SQLx
-- Serde for JSON serialization
-- Cargo workspace with multiple crates
-
-Frontend:
-
-- React 19
-- TypeScript
-- Vite
-- Vitest and ESLint
-
-Contracts:
-
-- Solidity
-- Hardhat 3
-- viem
+Order records and matcher-produced executions are persisted. A `Filled` status is an off-chain matcher result, not proof of token transfer or chain settlement. Only pending limit orders are rebuilt into in-memory books at startup; past executions are not replayed into matching state. See [system architecture](./docs/02-design/system-architecture.md) and [database design](./docs/02-design/database-design.md).
 
 ## Repository layout
 
 ```text
-DexSYS/
+.
 ├── backend/
-│   ├── Cargo.toml
-│   ├── Cargo.lock
-│   ├── config/
 │   ├── crates/
-│   │   ├── api/
-│   │   ├── matching-engine/
-│   │   ├── orderbook/
-│   │   └── shared/
-│   ├── docker/
-│   ├── examples/
-│   ├── migrations/
-│   └── tests/
+│   │   ├── api/                 # Axum routes, auth, persistence, matching integration
+│   │   ├── matching-engine/     # limit matching
+│   │   ├── orderbook/           # price levels and FIFO queues
+│   │   └── shared/              # engine order types
+│   └── migrations/              # PostgreSQL schema and ownership/priority changes
 ├── frontend/
-│   ├── package.json
-│   ├── vite.config.ts
-│   ├── .env.example
-│   ├── index.html
-│   └── src/
+│   ├── src/App.tsx              # trading UI
+│   ├── src/services/            # API, Auth0-backed orders, Binance, CoinGecko
+│   └── src/domain/              # view/domain helpers and tests
 ├── contracts/
-│   ├── package.json
-│   ├── hardhat.config.ts
-│   └── ...
-├── docs/
-│   ├── 01-requirements/
-│   ├── 02-design/
-│   ├── 03-api/
-│   ├── 04-testing/
-│   ├── 05-deployment/
-│   └── adr/
-├── LICENSE
-├── README.md
-└── .gitignore
+│   ├── contracts/core/SettlementVault.sol
+│   └── test/SettlementVault.ts
+└── docs/
+    ├── 01-requirements/
+    ├── 02-design/
+    ├── 03-api/
+    ├── 04-testing/
+    ├── 05-deployment/
+    └── adr/
 ```
 
-## Backend
+There is no checked-in deployment infrastructure, container definition, workflow, or submission screenshot/evidence asset.
 
-The backend lives in `backend/` as a Cargo workspace. The workspace includes:
+## Prerequisites and quick start
 
-- `crates/api` — HTTP API entrypoint and routes
-- `crates/orderbook` — orderbook data structure and order handling
-- `crates/matching-engine` — execution logic foundation
-- `crates/shared` — shared data models (order side, order type, order schema)
+Use native Rust/Cargo, Node.js/npm, and PostgreSQL; Docker Desktop is not required. Configure local PostgreSQL and Auth0 as described in [getting started](./docs/getting-started.md).
 
-### Backend architecture
+From repository root, create/edit `.env` with `DATABASE_URL`, `AUTH0_DOMAIN`, and optionally `AUTH0_AUDIENCE`, then start:
 
-The API is written with Axum and shares a SQLx PostgreSQL pool through its application state. The server currently binds to `127.0.0.1:8080`.
-
-Core backend components:
-
-- `AppState` shares the PostgreSQL pool used by token and order repositories
-- SQLx migrations apply automatically during API startup; demo ETH/BTC token and pair rows are inserted only when absent
-- `/health` and `/` return API service health information
-- `/tokens/{symbol}` returns persistent token metadata for ETH and BTC
-- `/orders` supports list/create operations
-- `/orders/{id}` supports get/cancel operations
-- Order submission serializes access to a per-trading-pair in-memory matching engine
-- Pending limit orders are restored from PostgreSQL into the in-memory orderbooks at startup
-- Persisted order priority sequence preserves FIFO order when a price level is restored
-- Trades are persisted only from executions returned by `MatchingEngine::process_order`
-- Market-order submission is rejected because the existing engine dereferences a limit price and does not implement market-order behavior
-
-### Current backend data model
-
-Token response shape:
-
-```json
-{
-  "symbol": "ETH",
-  "name": "Ethereum",
-  "validated": true,
-  "price": 3500.0,
-  "change_24h": 2.4,
-  "balance": 1.25,
-  "contract_address": "0x...",
-  "supported_pairs": ["USDC", "WBTC"]
-}
-```
-
-Order payload shape:
-
-```json
-{
-  "id": "order-123",
-  "user_id": "alice",
-  "trading_pair": "ETH/BTC",
-  "side": "Buy",
-  "order_type": "Limit",
-  "price": 3500.0,
-  "quantity": 1.5,
-  "status": "Pending"
-}
-```
-
-### Backend routes
-
-| Method | Route | Purpose |
-| --- | --- | --- |
-| GET | `/` | Health endpoint |
-| GET | `/health` | Health endpoint |
-| GET | `/tokens/{symbol}` | Fetch token metadata |
-| GET | `/orders` | List persisted orders |
-| POST | `/orders` | Create order |
-| GET | `/orders/{id}` | Fetch one order |
-| DELETE | `/orders/{id}` | Cancel order |
-
-### Backend behavior
-
-The current backend behaves like a lightweight exchange prototype with persistent API records:
-
-- ETH/BTC token metadata and the ETH/BTC plus BTC/ETH pairs are initialized in PostgreSQL only when absent
-- Missing tokens return `404` with `{ "error": "Token Not Found" }`
-- Invalid orders return `400` with `{ "error": "Invalid Order" }`
-- Duplicate orders return `409` with `{ "error": "Order Already Exists" }`
-- Orders require an active and approved persisted trading pair
-- Cancellation persists `Cancelled` for pending orders; invalid transitions return `409`
-- Database failures return `500`; they are not reported as successful empty results
-
-See [PostgreSQL local development](#postgresql-local-development) for database setup and backend run instructions.
-
-The server starts on:
-
-```text
-http://127.0.0.1:8080
-```
-
-## Frontend
-
-The frontend is a React + TypeScript application created with Vite. It provides a responsive DEX trading terminal, supported-pair limit-order entry, backend order history, token markets, and protocol metadata.
-
-### Frontend features
-
-- Responsive trading layout
-- Dark/light theme persisted with `localStorage`
-- Dark-first trading terminal with a persistent optional light theme
-- Token search and market selection
-- Explicit unavailable states for chart history, depth, and volume
-- API-driven token info loading from the backend
-- Limit-order submission to `POST /orders` and persisted order history from `GET /orders`
-- Individual persisted-order refresh through `GET /orders/{id}`
-- Activity filters for all, open, filled, and cancelled API orders
-- Market-order submission is explicitly unsupported by the current backend
-- Order `user_id` is manually entered and unverified; there is no wallet connection or authentication
-- Clearly labelled fallback token metadata when API requests fail; sample trades and fabricated chart/orderbook data are not presented
-- Explicit connection status messages for backend availability
-- Binance public `ethbtc@ticker` WebSocket spot updates, including connection status, last-received time, bounded reconnect backoff, and a stale-price indication
-- CoinGecko REST USD reference prices and 24-hour changes refreshed every 60 seconds
-
-### Frontend architecture
-
-The main frontend files are:
-
-- `frontend/src/App.tsx` — main trading interface and state management
-- `frontend/src/services/apiClient.ts` — Fetch wrapper with validation and error handling
-- `frontend/src/services/orderService.ts` — backend order DTO validation and create/list/get calls
-- `frontend/src/services/tokenService.ts` — Maps backend token data into frontend token view models
-- `frontend/src/services/marketTickerService.ts` — Parses and manages the Binance ETHBTC WebSocket ticker stream
-- `frontend/src/services/marketDataService.ts` — Fetches CoinGecko USD reference prices and 24-hour changes
-- `frontend/src/data/demoData.ts` — representative fallback token metadata only
-- `frontend/src/types.ts` — frontend token view types
-
-### Frontend environment and proxy
-
-The frontend uses Vite proxy configuration in `frontend/vite.config.ts`:
-
-- `/api` is proxied to `http://127.0.0.1:8080`
-- This allows the browser to call `/api/...` without CORS issues during local development
-
-The frontend uses these environment variables:
-
-```env
-VITE_API_BASE_URL=/api
-DEXSYS_API_PROXY_TARGET=http://127.0.0.1:8080
-```
-
-The example config is in `frontend/.env.example`.
-The pair spot price is streamed from Binance `ethbtc@ticker`; the `BTC/ETH` display uses the reciprocal of each ETHBTC tick. Connection state and the last received update time are shown separately from CoinGecko REST's USD reference prices and 24-hour changes. If the stream disconnects, its last price is retained and marked stale. In the trading panel, submit a limit order using the supported `ETH/BTC` or `BTC/ETH` pair. Enter a base quantity, a limit price in quote-token units per base token, and a required user ID. That ID is an unverified caller-provided label only—not a wallet address, signature, authenticated identity, or proof of ownership. Market orders are not submitted. The backend order response is shown after submission and the persisted order list is refreshed.
-
-CoinGecko USD prices and token balances are reference/seeded metadata, not wallet holdings. Chart history, orderbook depth, volume, creation timestamps, and filled quantities are not available from the current API and are shown as unavailable. Order submission does not create a blockchain transaction or settlement confirmation.
-
-### Frontend run instructions
-
-From the repository root:
-
-```bash
-cd frontend
-npm install
-cp -n .env.example .env
-npm run dev
-```
-
-The dev server usually runs on:
-
-```text
-http://localhost:5173
-```
-
-### Frontend testing and validation
-
-```bash
-cd frontend
-npm run test
-npm run lint
-npm run build
-```
-
-## Contracts
-
-The `contracts/` directory is a Hardhat 3 project for Solidity-based DEX settlement and blockchain integration work. The project currently includes a Hardhat configuration targeting a simulated mainnet and OP chain, plus the packaging required for future on-chain contract development.
-
-Settlement vault integration added to the project.
-
-### Contract project run instructions
-
-```bash
-cd contracts
-npm install
-npx hardhat test
-```
-
-## Current implementation reality
-
-The repository is best understood as an exchange prototype with the following boundaries:
-
-- The backend exposes token and order endpoints, but not a real market or liquidity engine
-- The frontend submits limit orders to the API and reads persisted order history, but does not submit blockchain transactions or connect a wallet
-- Order execution uses the in-memory matching engine behind the API; PostgreSQL stores orders and actual engine-produced trades
-- The smart contract project is ready for future settlement work, but not yet connected to real user flows
-
-## Recommended local development flow
-
-1. Start the Rust API:
-
-```bash
-cd backend
-cargo run -p api
-```
-
-2. Start the frontend:
-
-```bash
-cd frontend
-npm install
-cp .env.example .env
-npm run dev
-```
-
-3. Open the app in the browser and verify the token metadata loads from `/api/tokens/ETH` and `/api/tokens/BTC`.
-
-4. Use the frontend demo fallback to confirm the UI still renders correctly if the backend is offline.
-
-5. Extend the backend and contract layers as market execution, user auth, and settlement workflows are added.
-
-## API contract summary
-
-### Token info
-
-```http
-GET /tokens/{symbol}
-```
-
-Returns a token record for `ETH` or `BTC` initialized in PostgreSQL without overwriting existing token metadata.
-
-### Health
-
-```http
-GET /health
-```
-
-Returns service metadata and status.
-
-### Orders
-
-```http
-GET /orders
-POST /orders
-GET /orders/{id}
-DELETE /orders/{id}
-```
-
-These endpoints preserve the existing order request/response shape while reading and writing PostgreSQL. Cancellation is limited to pending orders.
-
-### PostgreSQL local development
-
-Start the local PostgreSQL service (for Homebrew, use the installed PostgreSQL formula):
-
-```bash
-brew services start postgresql
-createdb dexsys
-```
-
-Copy the safe example configuration and run the API from any working directory. The API resolves the repository-root `.env`, applies embedded SQLx migrations at startup, and never prints the database URL:
-
-```bash
-cp .env.example .env
+```sh
 cargo run --manifest-path backend/Cargo.toml -p api
 ```
 
-The example `DATABASE_URL` is `postgresql://localhost/dexsys`. Migrations are applied by the application; installing `sqlx-cli` is not required.
+In a second terminal, create/edit `frontend/.env` with `VITE_AUTH0_DOMAIN`, `VITE_AUTH0_CLIENT_ID`, and `VITE_AUTH0_AUDIENCE` (optional `VITE_API_BASE_URL` and `DEXSYS_API_PROXY_TARGET`), then:
 
-The database stores prices and quantities as `NUMERIC(38,18)`. API order prices are expressed in quote-token units per base-token unit, and quantities in base-token units. Matching uses checked fixed-point conversion: 100 engine price ticks per API price unit (0.01 price increments) and 1,000,000 engine quantity units per API quantity unit (0.000001 quantity increments). Values that are not exactly representable at those scales or exceed `i64` bounds are rejected; there is no rounding. Engine execution integers convert back to exact decimal strings for PostgreSQL `NUMERIC` writes. Existing API JSON remains numeric (`f64`), and database values that cannot round-trip through that contract are rejected when retrieved.
-
-Each matching engine is in memory and scoped to one pair so the existing engine cannot cross-match orders from different pairs. API submissions and cancellations are serialized through shared state. Submission executes against a staged engine clone; the order, maker/taker remainders, actual trades, and audit rows are written in one PostgreSQL transaction, and the live engine is replaced only after commit. This prevents a failed database write from mutating that API process's live orderbook.
-
-PostgreSQL still cannot be transactionally atomic with in-memory matching or blockchain operations. There is no durable execution outbox/recovery protocol, and open orders are restored but prior trades are not replayed into matching. Settlement status is application bookkeeping only and is not proof of on-chain confirmation.
-
-### Backend tests
-
-Create a dedicated test database; do not point the persistence integration test at a development database. The test requires the database name to end in `_test` and does not delete test data:
-
-```bash
-createdb dexsys_test
-DEXSYS_TEST_DATABASE_URL=postgresql:///dexsys_test \
-  cargo test --manifest-path backend/Cargo.toml -p api --test persistence -- --ignored
-cargo test --manifest-path backend/Cargo.toml --workspace
+```sh
+cd frontend
+npm ci
+npm run dev
 ```
 
-## Roadmap and future work
+Default API audience: `https://api.dexsys.local`. The Vite dev proxy maps browser `/api/...` to backend routes. Read [usage](./docs/usage.md) for the limit-order demonstration and [troubleshooting](./docs/troubleshooting.md) for common setup errors. No secrets belong in source or `VITE_*` variables.
 
-Planned evolution for the project includes:
+## Development and validation commands
 
-- Authenticated users and wallet connection
-- A persistent matching-engine execution integration and recovery/reconciliation flow
-- Historical price feeds and live orderbook updates
-- Smart contract settlement, approvals, and token flows
-- Production-grade security, observability, and deployment pipeline
+```sh
+# Run each command from repository root
+(cd frontend && npm ci && npm test && npm run lint && npm run build)
+cargo test --manifest-path backend/Cargo.toml --workspace
 
-## Documentation
+# Optional PostgreSQL integration tests; dedicated, isolated _test database only
+createdb dexsys_test
+DEXSYS_TEST_DATABASE_URL=postgresql://localhost/dexsys_test \
+  cargo test --manifest-path backend/Cargo.toml -p api --test persistence -- --ignored
 
-Additional design and requirement notes live under `docs/` and include:
+# Standalone Solidity contract (local Hardhat network)
+(cd contracts && npm ci && npm test && npx hardhat build)
+```
 
-- Requirements and user stories
-- Design documents and architecture notes
-- API references
-- Testing strategy and deployment guidance
+The four ignored database cases write uniquely named rows and do not clean them up. Do not point them at a development/shared database. Full prerequisites and test scope are in the [test plan](./docs/04-testing/test-plan.md); no coverage percentage is published because no coverage report is configured.
 
-## License
+## Documentation index
 
-This repository is licensed under the MIT-style license declared in `LICENSE`.
+- **Requirements:** [SRS](./docs/01-requirements/SRS.md) · [functional requirements and traceability](./docs/01-requirements/functional-requirements.md) · [non-functional requirements](./docs/01-requirements/non-functional-requirements.md) · [user stories](./docs/01-requirements/user-stories.md) · [use cases](./docs/01-requirements/use-cases.md) · [glossary](./docs/01-requirements/glossary.md)
+- **Design:** [system architecture](./docs/02-design/system-architecture.md) · [components](./docs/02-design/component-diagram.md) · [class view](./docs/02-design/class-diagram.md) · [database](./docs/02-design/database-design.md) · [deployment topology](./docs/02-design/deployment-diagram.md) · [sequences](./docs/02-design/sequence-diagrams.md) · [states](./docs/02-design/state-diagrams.md) · [token information](./docs/02-design/token-information.md) · [trading interface](./docs/02-design/trading-interface.md)
+- **API:** [authentication](./docs/03-api/authentication.md) · [errors](./docs/03-api/error-codes.md) · [orders](./docs/03-api/orders.md) · [HTTP route/trade inventory](./docs/03-api/trades.md) · [wallet/settlement boundary](./docs/03-api/wallet.md) · [external WebSocket market data](./docs/03-api/websocket.md)
+- **Testing:** [plan and commands](./docs/04-testing/test-plan.md) · [strategy](./docs/04-testing/test-strategy.md) · [test cases](./docs/04-testing/test-cases.md) · [coverage status](./docs/04-testing/coverage.md)
+- **Deployment:** [environment](./docs/05-deployment/environment.md) · [container status](./docs/05-deployment/docker.md) · [CI/CD status](./docs/05-deployment/ci-cd.md) · [future deployment guide](./docs/05-deployment/deployment-guide.md)
+- **Decisions:** [ADR template](./docs/adr/000-template.md) · [architecture](./docs/adr/001-project-architecture.md) · [Rust API](./docs/adr/002-rust-backend.md) · [off-chain orderbook](./docs/adr/003-off-chain-orderbook.md) · [standalone vault boundary](./docs/adr/004-smart-contract-settlement.md)
+- **Practical guides:** [getting started](./docs/getting-started.md) · [usage](./docs/usage.md) · [troubleshooting](./docs/troubleshooting.md)
 
-## Summary
+The ADRs are reconstructed from source; inferred rationale is labelled and not presented as recorded historical discussion.
 
-DexSYS is a full-stack DEX prototype designed to demonstrate the shape of a decentralized exchange system across backend, frontend, and smart-contract layers. It is currently a polished preview of the exchange experience, backed by a Rust API and a React trading interface, while the underlying execution, wallet, and settlement systems remain under active construction.
+## Security and academic MVP boundaries
+
+- Auth0 issuer/subject identifies order owners; it is not wallet verification.
+- The backend has no wallet signing, custody, balance checking/reservation, or contract settlement.
+- The matcher is in-process and not safe to scale across replicas without a shared execution/recovery design.
+- Database `settlements` structures do not indicate a running settlement worker or chain confirmation.
+- External market values and seeded metadata are not liquidity guarantees.
+- This repository is not a production exchange; no deployment or complete security verification is claimed.
+
+For the contract's standalone scope and tests see [`contracts/README.md`](./contracts/README.md). No demo screenshots or deployed submission evidence are currently checked in.

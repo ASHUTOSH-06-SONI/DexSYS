@@ -1,58 +1,19 @@
-# Validated Token Information
+# Token and market information
 
-## Purpose
+## Sources and meaning
 
-DexSYS provides traders with a compact token-information view before they select an asset for trading. The view is intended to make the supported asset and its validation status clear without requiring the user to leave the trading workspace.
+The unauthenticated backend `GET /tokens/{symbol}` reads PostgreSQL metadata for seeded `ETH` and `BTC`. `TokenInfo` contains `symbol`, `name`, `validated`, `price`, `change_24h`, `balance`, `contract_address`, and `supported_pairs`. At startup, missing rows receive seed values; existing rows are left unchanged. Seeded `balance` is a sample field and is not a user or wallet balance.
 
-## User Story
+The frontend requests `ETH` and `BTC` metadata. It separately fetches USD values and 24-hour changes for ETH, BTC, USDC, and WBTC from CoinGecko's public `/api/v3/simple/price` endpoint every 60 seconds. That external quote layer can fail independently of DexSYS. Binance ETHBTC ticks provide pair spot display only.
 
-> As a user, I want to view validated token information so that I can make informed trading decisions.
+## UI behavior
 
-## Information Displayed
+- Market rows can be searched and filtered by all assets or largest moves.
+- Pair selection is limited by the trade control to `ETH/BTC` and `BTC/ETH`.
+- API metadata and seeded fallback data have visible status messaging.
+- Volume is shown as unavailable. No market-history chart or live depth is fabricated.
+- Backend token metadata's `supported_pairs` are descriptive metadata and are not a wallet balance or proof of on-chain validation.
 
-For each supported token, the interface displays:
+## Data limitations
 
-- Token name and symbol
-- Validation status
-- Contract/address identifier
-- Current indicative price
-- 24-hour price movement
-- Available balance when a wallet is connected
-- Supported trading pairs
-- A short risk/validation note
-
-## Validation States
-
-The prototype uses three conceptual states:
-
-- **Validated** — token metadata has passed DexSYS validation checks and is eligible for display/trading.
-- **Pending review** — metadata is known but validation is not complete.
-- **Unsupported** — the token is not currently approved for DexSYS trading.
-
-Only validated assets are presented as supported trading assets in the current prototype.
-
-## User Flow
-
-1. User opens the DexSYS trading workspace.
-2. User selects or inspects a supported token.
-3. DexSYS displays the token's identity and validation status.
-4. User reviews price, movement, balance, and supported pairs.
-5. User can use the information to decide whether to continue to the swap interface.
-
-## Current Prototype Behaviour
-
-The frontend uses a local list of representative testnet token metadata. Validation status is represented explicitly in the UI and does not yet call a backend validation service. Contract identifiers and market values are demonstration data.
-
-## Future Integration
-
-The local token metadata should be replaced with the validated-token API represented by the backend. The frontend should consume the API response, handle loading/error states, and prevent unsupported assets from being offered as tradable selections.
-
-## Acceptance Criteria
-
-- A user can identify the selected token by name and symbol.
-- The interface clearly shows whether the token is validated.
-- The interface shows indicative price and 24-hour movement.
-- The interface exposes the token contract/address identifier.
-- Wallet balance is shown when wallet state is available.
-- Supported trading pairs are visible.
-- The implementation does not claim that demonstration data has been verified on-chain.
+Current PostgreSQL seed values are illustrative (including backend USD price/change fields). CoinGecko values are external references, not the executable order price. The browser ticker has only ETHBTC; BTC/ETH is its reciprocal. A reference-price update is not a matcher update or an indication of liquidity.
