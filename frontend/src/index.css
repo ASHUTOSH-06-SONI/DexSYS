@@ -14,7 +14,7 @@
   --surface-strong: #243029;
   --text: #e5e9e7;
   --text-soft: #a7b2ab;
-  --text-faint: #738078;
+  --text-faint: #8b9890;
   --border: #29342d;
   --border-soft: #202a24;
   --accent: #a8d672;
@@ -23,6 +23,11 @@
   --negative: #ed7772;
   --header: #101613;
   --shadow: 0 12px 30px rgba(0, 0, 0, .18);
+  --font-caption: 12px;
+  --font-control: 14px;
+  --font-body: 15px;
+  --font-section: 20px;
+  --font-page: 30px;
   color-scheme: dark;
 }
 
@@ -35,7 +40,7 @@
   --surface-strong: #e6ece7;
   --text: #18231e;
   --text-soft: #5e6b63;
-  --text-faint: #78847c;
+  --text-faint: #69766e;
   --border: #d8e0d9;
   --border-soft: #e6ece7;
   --accent: #81b955;
@@ -48,7 +53,7 @@
 
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
-body { width: 100%; min-width: 0; min-height: 100vh; margin: 0; background: var(--page); color: var(--text); }
+body { width: 100%; min-width: 0; min-height: 100vh; margin: 0; background: var(--page); color: var(--text); font-size: var(--font-body); line-height: 1.45; }
 button, input, select { font: inherit; letter-spacing: 0; }
 button { color: inherit; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
