@@ -5,6 +5,7 @@ import { getVisibleMarkets, selectMarketToken, type MarketFilter } from './domai
 import { activityFilters, filterOrders, type ActivityFilter } from './domain/orderActivity'
 import { loadThemePreference, saveThemePreference } from './domain/themePreference'
 import { applyMarketPrices, getMarketPrices, MARKET_PRICE_REFRESH_MS, MARKET_PRICE_SYMBOLS, type MarketPrices } from './services/marketDataService'
+import { subscribeToMarketTicker, type MarketConnectionStatus } from './services/marketTickerService'
 import { cancelOrder, createOrder, getOrder, listOrders, type ApiOrderSide, type Order } from './services/orderService'
 import { getMarketTokens } from './services/tokenService'
 import type { Token } from './types'
@@ -22,6 +23,12 @@ type MarketFeedState = {
   updatedAt: number | null
   refreshing: boolean
   error: string
+}
+
+type MarketStreamState = {
+  status: MarketConnectionStatus
+  price: number | null
+  updatedAt: number | null
 }
 
 function formatPairPrice(price: number) {
@@ -52,6 +59,12 @@ function App() {
     error: '',
   })
   const [retryMarketLoad, setRetryMarketLoad] = useState(0)
+  const [retryMarketStream, setRetryMarketStream] = useState(0)
+  const [marketStream, setMarketStream] = useState<MarketStreamState>({
+    status: 'connecting',
+    price: null,
+    updatedAt: null,
+  })
   const [selectedToken, setSelectedToken] = useState('ETH')
   const [tradingPair, setTradingPair] = useState('ETH/BTC')
   const [marketSearch, setMarketSearch] = useState('')
@@ -80,8 +93,8 @@ function App() {
   const baseToken = tokens.find((item) => item.symbol === baseSymbol) ?? token
   const baseMarketPrice = marketFeed.prices?.[baseSymbol as keyof MarketPrices]
   const quoteMarketPrice = marketFeed.prices?.[quoteSymbol as keyof MarketPrices]
-  const pairPrice = baseMarketPrice && quoteMarketPrice
-    ? baseMarketPrice.priceUsd / quoteMarketPrice.priceUsd
+  const pairPrice = marketStream.price !== null
+    ? tradingPair === 'BTC/ETH' ? 1 / marketStream.price : marketStream.price
     : null
   const pairChange = baseMarketPrice && quoteMarketPrice && baseMarketPrice.change24h > -100 && quoteMarketPrice.change24h > -100
     ? ((1 + baseMarketPrice.change24h / 100) / (1 + quoteMarketPrice.change24h / 100) - 1) * 100
@@ -89,13 +102,23 @@ function App() {
   const marketUpdatedAt = marketFeed.updatedAt
     ? new Intl.DateTimeFormat('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(marketFeed.updatedAt)
     : ''
+  const marketStreamUpdatedAt = marketStream.updatedAt
+    ? new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'medium' }).format(marketStream.updatedAt)
+    : ''
   const marketFeedMessage = marketFeed.status === 'loading'
-    ? 'CoinGecko · loading live USD prices; seeded/demo values shown until available'
+    ? 'CoinGecko REST · loading USD reference prices; seeded/demo values shown until available'
     : marketFeed.status === 'live'
-      ? `CoinGecko · live USD prices · updated ${marketUpdatedAt}${marketFeed.refreshing ? ' · refreshing' : ''}`
+      ? `CoinGecko REST · USD reference prices · updated ${marketUpdatedAt} · refreshes every 60 seconds${marketFeed.refreshing ? ' · refreshing' : ''}`
       : marketFeed.status === 'stale'
-        ? `CoinGecko unavailable · showing stale prices from ${marketUpdatedAt}`
-        : 'CoinGecko unavailable · showing seeded/demo prices'
+        ? `CoinGecko REST unavailable · showing stale USD references from ${marketUpdatedAt}`
+        : 'CoinGecko REST unavailable · showing seeded/demo USD references'
+  const marketStreamMessage = marketStream.status === 'connecting'
+    ? `Binance WebSocket · ETHBTC · connecting · last update received ${marketStreamUpdatedAt || 'not received yet'}${marketStream.updatedAt ? ' · showing stale price' : ''}`
+    : marketStream.status === 'live'
+      ? `Binance WebSocket · ETHBTC · live · last update received ${marketStreamUpdatedAt}`
+      : marketStream.status === 'reconnecting'
+        ? `Binance WebSocket · ETHBTC · reconnecting · last update received ${marketStreamUpdatedAt || 'not received yet'}${marketStream.updatedAt ? ' · price is stale' : ''}`
+        : `Binance WebSocket · ETHBTC · disconnected/stale · last update received ${marketStreamUpdatedAt || 'not received yet'}`
   const orderPairSupported = supportedPairs.includes(tradingPair)
   const visibleOrders = isAuthenticated && user?.sub === ordersOwnerSubject ? orders : []
   const openOrders = visibleOrders.filter((order) => order.status === 'Pending')
@@ -166,6 +189,15 @@ function App() {
       if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
     }
   }, [retryMarketLoad])
+
+  useEffect(() => subscribeToMarketTicker({
+    onStatus: (status) => setMarketStream((current) => ({ ...current, status })),
+    onTicker: ({ price, receivedAt }) => setMarketStream((current) => ({
+      ...current,
+      price,
+      updatedAt: receivedAt,
+    })),
+  }), [retryMarketStream])
 
   useEffect(() => {
     if (apiStatus !== 'connected' || authLoading || !isAuthenticated || !user?.sub) return
@@ -343,24 +375,32 @@ function App() {
         {marketFeed.error && <span className="backend-status-error" title={marketFeed.error}>{marketFeed.error}</span>}
         {(marketFeed.status === 'error' || marketFeed.status === 'stale') && <button type="button" onClick={() => setRetryMarketLoad((attempt) => attempt + 1)}>Retry prices</button>}
       </div>
+      <div className={`backend-status market-stream-status ${marketStream.status}`} role="status" aria-live="polite">
+        <span className="status-dot" />
+        <span>{marketStreamMessage}</span>
+        {marketStream.status === 'disconnected' && <button type="button" onClick={() => {
+          setMarketStream((current) => ({ ...current, status: 'connecting' }))
+          setRetryMarketStream((attempt) => attempt + 1)
+        }}>Retry stream</button>}
+      </div>
 
       <div className="page-content">
         <section className="trade-section" id="trade">
           <div className="page-heading trade-heading">
-            <div><p className="eyebrow">DEXSYS TESTNET</p><h1>Trade</h1><p className="page-description">Limit-order trading workspace. Market prices come from CoinGecko; token metadata and sample balances are seeded, and wallet connectivity is unavailable.</p></div>
+            <div><p className="eyebrow">DEXSYS TESTNET</p><h1>Trade</h1><p className="page-description">Limit-order trading workspace. Pair spot prices stream from Binance; CoinGecko REST supplies USD references and 24-hour changes. Token metadata and sample balances are seeded.</p></div>
             <span className="environment-badge"><i /> TEST ENVIRONMENT</span>
           </div>
 
           <div className="market-summary">
             <div className="summary-pair">
               <span className="token-avatar">{baseToken.icon}</span>
-              <div><strong>{tradingPair}</strong><small>Indicative pair · {orderPairSupported ? 'order entry enabled' : 'unsupported pair'}</small></div>
+              <div><strong>{tradingPair}</strong><small>Binance spot stream · {orderPairSupported ? 'order entry enabled' : 'unsupported pair'}</small></div>
               <select value={tradingPair} onChange={(event) => setTradingPair(event.target.value)} aria-label="Trading pair">
                 {supportedPairs.map((pair) => <option key={pair} value={pair}>{pair}</option>)}
               </select>
             </div>
-            <div className="summary-stat"><span>Pair price</span><strong>{pairPrice === null ? marketFeed.status === 'loading' ? 'Loading…' : 'Unavailable' : `${formatPairPrice(pairPrice)} ${quoteSymbol}`}</strong></div>
-            <div className="summary-stat"><span>24h change</span><strong className={pairChange === null ? '' : pairChange < 0 ? 'negative' : 'positive'}>{pairChange === null ? 'Unavailable' : `${pairChange >= 0 ? '+' : ''}${pairChange.toFixed(2)}%`}</strong></div>
+            <div className="summary-stat"><span>Pair spot price</span><strong>{pairPrice === null ? marketStream.status === 'connecting' ? 'Connecting…' : 'Unavailable' : `${formatPairPrice(pairPrice)} ${quoteSymbol}`}</strong></div>
+            <div className="summary-stat"><span>24h change · USD references</span><strong className={pairChange === null ? '' : pairChange < 0 ? 'negative' : 'positive'}>{pairChange === null ? 'Unavailable' : `${pairChange >= 0 ? '+' : ''}${pairChange.toFixed(2)}%`}</strong></div>
             <div className="summary-stat"><span>24h volume</span><strong>Unavailable</strong></div>
           </div>
 
@@ -380,7 +420,7 @@ function App() {
               {chartTab === 'info' && <div className="chart-info">
                 <span className="eyebrow">PAIR INFORMATION</span>
                 <h2>{tradingPair}</h2>
-                <p>Trading pair is enabled in the seeded backend registry. Spot price is derived from CoinGecko USD prices; volume and liquidity are unavailable.</p>
+                <p>Trading pair is enabled in the seeded backend registry. Spot price streams from Binance; 24-hour reference change is derived from CoinGecko USD data. Volume and liquidity are unavailable.</p>
                 <div><span>Matching</span><strong>In-memory limit-order engine</strong></div>
                 <div><span>Settlement</span><strong>Not connected to chain</strong></div>
               </div>}

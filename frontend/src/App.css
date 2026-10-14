@@ -26,6 +26,9 @@
 .market-feed-status.live .status-dot { background: var(--positive); }
 .market-feed-status.stale .status-dot { background: #d4a04e; }
 .market-feed-status.error .status-dot { background: var(--negative); }
+.market-stream-status.live .status-dot { background: var(--positive); }
+.market-stream-status.connecting .status-dot, .market-stream-status.reconnecting .status-dot { background: #d4a04e; }
+.market-stream-status.disconnected .status-dot { background: var(--negative); }
 .backend-status-error { max-width: 40%; overflow: hidden; color: var(--text-faint); text-overflow: ellipsis; white-space: nowrap; }
 .backend-status button { min-height: 25px; margin-left: auto; padding: 0 9px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--text); font-size: 10px; cursor: pointer; }
 .page-content { width: min(1440px, 100%); margin: 0 auto; padding: 0 24px 38px; }
