@@ -17,7 +17,8 @@ Current gaps:
 
 - Auth0 OIDC application authentication for order endpoints; wallet identity remains separate
 - No blockchain settlement or on-chain confirmation flow
-- No real market data feed, orderbook feed, or WebSocket stream
+- No live orderbook feed or historical chart data
+- The trading interface receives ETH/BTC spot ticks from Binance's public WebSocket stream; CoinGecko REST remains the source for USD references and 24-hour changes
 - No wallet signing, SIWE, balance, or settlement verification
 
 Order endpoints require a valid Auth0 access token for the API audience `https://api.dexsys.local`. Configure the frontend `VITE_AUTH0_DOMAIN`, `VITE_AUTH0_CLIENT_ID`, and `VITE_AUTH0_AUDIENCE`, and the backend `AUTH0_DOMAIN` (optionally `AUTH0_AUDIENCE`). Orders are linked to a trusted issuer/subject principal; existing rows remain unassigned until separately verified and mapped.
@@ -195,7 +196,7 @@ The frontend is a React + TypeScript application created with Vite. It provides 
 - Dark/light theme persisted with `localStorage`
 - Dark-first trading terminal with a persistent optional light theme
 - Token search and market selection
-- Explicit unavailable states for chart history, depth, volume, and pair pricing
+- Explicit unavailable states for chart history, depth, and volume
 - API-driven token info loading from the backend
 - Limit-order submission to `POST /orders` and persisted order history from `GET /orders`
 - Individual persisted-order refresh through `GET /orders/{id}`
@@ -204,6 +205,8 @@ The frontend is a React + TypeScript application created with Vite. It provides 
 - Order `user_id` is manually entered and unverified; there is no wallet connection or authentication
 - Clearly labelled fallback token metadata when API requests fail; sample trades and fabricated chart/orderbook data are not presented
 - Explicit connection status messages for backend availability
+- Binance public `ethbtc@ticker` WebSocket spot updates, including connection status, last-received time, bounded reconnect backoff, and a stale-price indication
+- CoinGecko REST USD reference prices and 24-hour changes refreshed every 60 seconds
 
 ### Frontend architecture
 
@@ -213,6 +216,8 @@ The main frontend files are:
 - `frontend/src/services/apiClient.ts` — Fetch wrapper with validation and error handling
 - `frontend/src/services/orderService.ts` — backend order DTO validation and create/list/get calls
 - `frontend/src/services/tokenService.ts` — Maps backend token data into frontend token view models
+- `frontend/src/services/marketTickerService.ts` — Parses and manages the Binance ETHBTC WebSocket ticker stream
+- `frontend/src/services/marketDataService.ts` — Fetches CoinGecko USD reference prices and 24-hour changes
 - `frontend/src/data/demoData.ts` — representative fallback token metadata only
 - `frontend/src/types.ts` — frontend token view types
 
@@ -231,9 +236,9 @@ DEXSYS_API_PROXY_TARGET=http://127.0.0.1:8080
 ```
 
 The example config is in `frontend/.env.example`.
-In the trading panel, submit a limit order using the supported `ETH/BTC` or `BTC/ETH` pair. Enter a base quantity, a limit price in quote-token units per base token, and a required user ID. That ID is an unverified caller-provided label only—not a wallet address, signature, authenticated identity, or proof of ownership. Market orders are not submitted. The backend order response is shown after submission and the persisted order list is refreshed.
+The pair spot price is streamed from Binance `ethbtc@ticker`; the `BTC/ETH` display uses the reciprocal of each ETHBTC tick. Connection state and the last received update time are shown separately from CoinGecko REST's USD reference prices and 24-hour changes. If the stream disconnects, its last price is retained and marked stale. In the trading panel, submit a limit order using the supported `ETH/BTC` or `BTC/ETH` pair. Enter a base quantity, a limit price in quote-token units per base token, and a required user ID. That ID is an unverified caller-provided label only—not a wallet address, signature, authenticated identity, or proof of ownership. Market orders are not submitted. The backend order response is shown after submission and the persisted order list is refreshed.
 
-Token prices and balances are seeded metadata, not live market prices or wallet holdings. Pair quotes, chart history, orderbook depth, volume, creation timestamps, and filled quantities are not available from the current API and are shown as unavailable. Order submission does not create a blockchain transaction or settlement confirmation.
+CoinGecko USD prices and token balances are reference/seeded metadata, not wallet holdings. Chart history, orderbook depth, volume, creation timestamps, and filled quantities are not available from the current API and are shown as unavailable. Order submission does not create a blockchain transaction or settlement confirmation.
 
 ### Frontend run instructions
 
@@ -378,7 +383,7 @@ Planned evolution for the project includes:
 
 - Authenticated users and wallet connection
 - A persistent matching-engine execution integration and recovery/reconciliation flow
-- Real market data, historical price feeds, and WebSocket updates
+- Historical price feeds and live orderbook updates
 - Smart contract settlement, approvals, and token flows
 - Production-grade security, observability, and deployment pipeline
 

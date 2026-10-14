@@ -36,7 +36,7 @@ The review action remains unavailable until a wallet is connected and a positive
 
 ### Market Overview
 
-The market panel displays indicative prices for supported pairs and percentage movement. It also provides the connected portfolio balance.
+The market panel displays ETH/BTC spot price updates from Binance's public `ethbtc@ticker` WebSocket stream; BTC/ETH is displayed as the reciprocal. Connection state and the last received update time are visible, and a retained price is marked stale when the stream disconnects. CoinGecko REST provides USD reference prices and 24-hour changes, refreshed every 60 seconds. Chart history, order-book depth, and volume remain unavailable.
 
 ### Orders
 
