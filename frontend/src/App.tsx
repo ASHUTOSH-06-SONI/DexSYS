@@ -4,6 +4,7 @@ import { DEMO_TOKENS } from './data/demoData'
 import { getVisibleMarkets, selectMarketToken, type MarketFilter } from './domain/marketSelection'
 import { activityFilters, filterOrders, type ActivityFilter } from './domain/orderActivity'
 import { loadThemePreference, saveThemePreference } from './domain/themePreference'
+import { applyMarketPrices, getMarketPrices, MARKET_PRICE_REFRESH_MS, MARKET_PRICE_SYMBOLS, type MarketPrices } from './services/marketDataService'
 import { cancelOrder, createOrder, getOrder, listOrders, type ApiOrderSide, type Order } from './services/orderService'
 import { getMarketTokens } from './services/tokenService'
 import type { Token } from './types'
@@ -14,6 +15,18 @@ type ChartTab = 'chart' | 'depth' | 'info'
 type OrderPanelTab = 'entry' | 'orders'
 
 const changeTone = (change: string) => change.startsWith('-') ? 'negative' : 'positive'
+
+type MarketFeedState = {
+  status: 'loading' | 'live' | 'stale' | 'error'
+  prices: MarketPrices | null
+  updatedAt: number | null
+  refreshing: boolean
+  error: string
+}
+
+function formatPairPrice(price: number) {
+  return new Intl.NumberFormat('en-US', { maximumSignificantDigits: 8 }).format(price)
+}
 
 function App() {
   const {
@@ -31,6 +44,14 @@ function App() {
   const [apiStatus, setApiStatus] = useState<'loading' | 'connected' | 'offline'>('loading')
   const [apiError, setApiError] = useState('')
   const [retryTokenLoad, setRetryTokenLoad] = useState(0)
+  const [marketFeed, setMarketFeed] = useState<MarketFeedState>({
+    status: 'loading',
+    prices: null,
+    updatedAt: null,
+    refreshing: false,
+    error: '',
+  })
+  const [retryMarketLoad, setRetryMarketLoad] = useState(0)
   const [selectedToken, setSelectedToken] = useState('ETH')
   const [tradingPair, setTradingPair] = useState('ETH/BTC')
   const [marketSearch, setMarketSearch] = useState('')
@@ -52,11 +73,29 @@ function App() {
   const [cancellingOrderId, setCancellingOrderId] = useState('')
   const [activityFilter, setActivityFilter] = useState<ActivityFilter>('All')
 
-  const tokens = apiTokens ?? DEMO_TOKENS
+  const tokens = applyMarketPrices(apiTokens ?? DEMO_TOKENS, marketFeed.prices ?? {})
   const token = tokens.find((item) => item.symbol === selectedToken) ?? tokens[0]
   const visibleMarkets = getVisibleMarkets(tokens, marketSearch, marketFilter)
   const [baseSymbol, quoteSymbol] = tradingPair.split('/')
   const baseToken = tokens.find((item) => item.symbol === baseSymbol) ?? token
+  const baseMarketPrice = marketFeed.prices?.[baseSymbol as keyof MarketPrices]
+  const quoteMarketPrice = marketFeed.prices?.[quoteSymbol as keyof MarketPrices]
+  const pairPrice = baseMarketPrice && quoteMarketPrice
+    ? baseMarketPrice.priceUsd / quoteMarketPrice.priceUsd
+    : null
+  const pairChange = baseMarketPrice && quoteMarketPrice && baseMarketPrice.change24h > -100 && quoteMarketPrice.change24h > -100
+    ? ((1 + baseMarketPrice.change24h / 100) / (1 + quoteMarketPrice.change24h / 100) - 1) * 100
+    : null
+  const marketUpdatedAt = marketFeed.updatedAt
+    ? new Intl.DateTimeFormat('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(marketFeed.updatedAt)
+    : ''
+  const marketFeedMessage = marketFeed.status === 'loading'
+    ? 'CoinGecko · loading live USD prices; seeded/demo values shown until available'
+    : marketFeed.status === 'live'
+      ? `CoinGecko · live USD prices · updated ${marketUpdatedAt}${marketFeed.refreshing ? ' · refreshing' : ''}`
+      : marketFeed.status === 'stale'
+        ? `CoinGecko unavailable · showing stale prices from ${marketUpdatedAt}`
+        : 'CoinGecko unavailable · showing seeded/demo prices'
   const orderPairSupported = supportedPairs.includes(tradingPair)
   const visibleOrders = isAuthenticated && user?.sub === ordersOwnerSubject ? orders : []
   const openOrders = visibleOrders.filter((order) => order.status === 'Pending')
@@ -84,6 +123,49 @@ function App() {
     })
     return () => controller.abort()
   }, [retryTokenLoad])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    let refreshTimer: number | undefined
+
+    const refreshPrices = async () => {
+      setMarketFeed((current) => ({
+        ...current,
+        status: current.prices ? current.status : 'loading',
+        refreshing: true,
+        error: '',
+      }))
+      try {
+        const prices = await getMarketPrices(MARKET_PRICE_SYMBOLS, controller.signal)
+        if (controller.signal.aborted) return
+        setMarketFeed({
+          status: 'live',
+          prices,
+          updatedAt: Date.now(),
+          refreshing: false,
+          error: '',
+        })
+      } catch (error: unknown) {
+        if (controller.signal.aborted) return
+        setMarketFeed((current) => ({
+          ...current,
+          status: current.prices ? 'stale' : 'error',
+          refreshing: false,
+          error: error instanceof Error ? error.message : 'Unable to load CoinGecko market prices.',
+        }))
+      }
+
+      if (!controller.signal.aborted) {
+        refreshTimer = window.setTimeout(() => void refreshPrices(), MARKET_PRICE_REFRESH_MS)
+      }
+    }
+
+    void refreshPrices()
+    return () => {
+      controller.abort()
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
+    }
+  }, [retryMarketLoad])
 
   useEffect(() => {
     if (apiStatus !== 'connected' || authLoading || !isAuthenticated || !user?.sub) return
@@ -251,15 +333,21 @@ function App() {
 
       <div className={`backend-status ${apiStatus}`} role="status" aria-live="polite">
         <span className="status-dot" />
-        <span>{apiStatus === 'loading' ? 'Connecting to token API · demo metadata shown until connected' : apiStatus === 'connected' ? 'Token API connected · backend values are seeded and indicative' : 'Token API unavailable · demo metadata shown'}</span>
+        <span>{apiStatus === 'loading' ? 'Connecting to token API · demo metadata shown until connected' : apiStatus === 'connected' ? 'Token API connected · metadata and balances are seeded, not wallet holdings' : 'Token API unavailable · demo metadata shown'}</span>
         {apiError && <span className="backend-status-error" title={apiError}>{apiError}</span>}
         {apiStatus === 'offline' && <button type="button" onClick={() => { setApiStatus('loading'); setApiError(''); setRetryTokenLoad((attempt) => attempt + 1) }}>Retry</button>}
+      </div>
+      <div className={`backend-status market-feed-status ${marketFeed.status}`} role="status" aria-live="polite">
+        <span className="status-dot" />
+        <span>{marketFeedMessage}</span>
+        {marketFeed.error && <span className="backend-status-error" title={marketFeed.error}>{marketFeed.error}</span>}
+        {(marketFeed.status === 'error' || marketFeed.status === 'stale') && <button type="button" onClick={() => setRetryMarketLoad((attempt) => attempt + 1)}>Retry prices</button>}
       </div>
 
       <div className="page-content">
         <section className="trade-section" id="trade">
           <div className="page-heading trade-heading">
-            <div><p className="eyebrow">DEXSYS TESTNET</p><h1>Trade</h1><p className="page-description">Limit-order trading workspace. Token data is seeded; market data and wallet connectivity are unavailable.</p></div>
+            <div><p className="eyebrow">DEXSYS TESTNET</p><h1>Trade</h1><p className="page-description">Limit-order trading workspace. Market prices come from CoinGecko; token metadata and sample balances are seeded, and wallet connectivity is unavailable.</p></div>
             <span className="environment-badge"><i /> TEST ENVIRONMENT</span>
           </div>
 
@@ -271,8 +359,8 @@ function App() {
                 {supportedPairs.map((pair) => <option key={pair} value={pair}>{pair}</option>)}
               </select>
             </div>
-            <div className="summary-stat"><span>Pair price</span><strong>Not provided</strong></div>
-            <div className="summary-stat"><span>24h change</span><strong>Unavailable</strong></div>
+            <div className="summary-stat"><span>Pair price</span><strong>{pairPrice === null ? marketFeed.status === 'loading' ? 'Loading…' : 'Unavailable' : `${formatPairPrice(pairPrice)} ${quoteSymbol}`}</strong></div>
+            <div className="summary-stat"><span>24h change</span><strong className={pairChange === null ? '' : pairChange < 0 ? 'negative' : 'positive'}>{pairChange === null ? 'Unavailable' : `${pairChange >= 0 ? '+' : ''}${pairChange.toFixed(2)}%`}</strong></div>
             <div className="summary-stat"><span>24h volume</span><strong>Unavailable</strong></div>
           </div>
 
@@ -292,11 +380,11 @@ function App() {
               {chartTab === 'info' && <div className="chart-info">
                 <span className="eyebrow">PAIR INFORMATION</span>
                 <h2>{tradingPair}</h2>
-                <p>Trading pair is enabled in the seeded backend registry. Pair-level prices, volume and liquidity are not returned by the API.</p>
+                <p>Trading pair is enabled in the seeded backend registry. Spot price is derived from CoinGecko USD prices; volume and liquidity are unavailable.</p>
                 <div><span>Matching</span><strong>In-memory limit-order engine</strong></div>
                 <div><span>Settlement</span><strong>Not connected to chain</strong></div>
               </div>}
-              <div className="chart-footnote"><span>MARKET DATA</span><span>Not connected</span></div>
+              <div className="chart-footnote"><span>MARKET DATA</span><span>Spot only · history unavailable</span></div>
               <div className="orderbook">
                 <div className="panel-heading compact"><div><h2>Order book</h2><p>Live depth feed unavailable</p></div><span className="data-badge">NO LIVE DATA</span></div>
                 <div className="orderbook-head"><span>PRICE</span><span>SIZE</span><span>TOTAL</span></div>
@@ -344,7 +432,7 @@ function App() {
         </section>
 
         <section className="content-section" id="markets">
-          <SectionHeading eyebrow="MARKETS" title="Token markets" description="Backend-seeded token prices and metadata. Pair-level market data is not available." />
+          <SectionHeading eyebrow="MARKETS" title="Token markets" description="CoinGecko USD prices and 24-hour changes; DexSYS token metadata and sample balances remain seeded. Pair-level volume is not available." />
           <div className="market-controls">
             <label className="search-control"><span aria-hidden="true">⌕</span><input value={marketSearch} onChange={(event) => setMarketSearch(event.target.value)} placeholder="Search tokens" aria-label="Search tokens" /></label>
             <div className="filter-control" role="group" aria-label="Market sort">
@@ -354,7 +442,7 @@ function App() {
           </div>
           <div className="table-scroll">
             <div className="data-table market-table">
-              <div className="table-header market-columns"><span>ASSET / PAIRS</span><span>INDICATIVE PRICE</span><span>24H CHANGE</span><span>VOLUME</span><span /></div>
+              <div className="table-header market-columns"><span>ASSET / PAIRS</span><span>USD PRICE</span><span>24H CHANGE</span><span>VOLUME</span><span /></div>
               {visibleMarkets.map((item) => <button className="table-row market-columns" key={item.symbol} type="button" onClick={() => selectToken(item.symbol)}>
                 <span className="asset-cell"><i className="token-avatar">{item.icon}</i><span><strong>{item.name}</strong><small>{item.symbol} · {item.pairs.join(', ') || 'No supported pairs returned'}</small></span></span>
                 <strong>{item.price}</strong><span className={changeTone(item.change)}>{item.change}</span><span className="muted">Not provided</span><span className="trade-link">Select <b>→</b></span>
@@ -362,7 +450,7 @@ function App() {
               {visibleMarkets.length === 0 && <p className="empty-state">No assets match that search.</p>}
             </div>
           </div>
-          <p className="section-footnote">Prices, change and balances are seeded backend metadata; they are not a live market feed. Volume is not returned by the API.</p>
+          <p className="section-footnote">Prices and 24-hour changes are from CoinGecko when the feed is live; otherwise shown values are seeded/demo fallbacks. All balances are sample values, never connected wallet holdings. Volume is not provided.</p>
         </section>
 
         <section className="content-section" id="activity">
@@ -395,7 +483,7 @@ function App() {
           <div className="protocol-grid">
             {tokens.map((item) => <article className="protocol-token" key={item.symbol}>
               <div className="protocol-token-heading"><i className="token-avatar">{item.icon}</i><div><h3>{item.name}</h3><span>{item.symbol}</span></div><span className={`status-badge validation ${item.validation === 'Validated' ? 'valid' : 'unvalidated'}`}>{item.validation}</span></div>
-              <div className="protocol-fields"><span>Indicative price</span><strong>{item.price}</strong><span>24h change</span><strong className={changeTone(item.change)}>{item.change}</strong><span>Seed balance</span><strong>{item.balance.toLocaleString()} {item.symbol} <small>· not a wallet balance</small></strong><span>Contract / identifier</span><code>{item.address || 'Not provided'}</code></div>
+              <div className="protocol-fields"><span>USD price</span><strong>{item.price}</strong><span>24h change</span><strong className={changeTone(item.change)}>{item.change}</strong><span>Sample balance</span><strong>{item.balance.toLocaleString()} {item.symbol} <small>· not a wallet balance</small></strong><span>Contract / identifier</span><code>{item.address || 'Not provided'}</code></div>
               <div className="protocol-pairs"><span>Supported pairs</span><div>{item.pairs.length ? item.pairs.map((pair) => <span className="pair-badge" key={pair}>{pair}</span>) : <span className="muted">Not provided</span>}</div></div>
               <p className="section-footnote">{item.note}</p>
             </article>)}

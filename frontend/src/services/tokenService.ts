@@ -65,7 +65,7 @@ function toToken(info: TokenInfoResponse): Token {
     change,
     pairs: info.supported_pairs.map((pair) => `${info.symbol} / ${pair}`),
     validation: info.validated ? 'Validated' : 'Unsupported',
-    note: 'Token metadata returned by the DexSYS API. Current backend values are seeded in AppState.',
+    note: 'Token metadata returned by the DexSYS API. Backend prices and balances are seeded; balances are not wallet holdings.',
   }
 }
 
