@@ -2,7 +2,7 @@
 
 ## Runtime components
 
-- **Browser:** React/Vite client. Auth0 SPA handles application login/token retrieval. Order forms use the DexSYS API; public token reads are unauthenticated. It independently fetches CoinGecko USD references and subscribes to Binance ETHBTC ticker.
+- **Browser:** React/Vite client. Auth0 SPA handles application login/token retrieval. Order forms use the DexSYS API; public token reads are unauthenticated. It independently fetches CoinGecko USD references and Binance ETHBTC klines, and subscribes to the combined Binance ETHBTC ticker/kline stream.
 - **HTTP API:** Rust/Axum service bound to `127.0.0.1:8080`. Health and token routes are public. Only `/orders` routes have Auth0 middleware.
 - **Persistence:** PostgreSQL through SQLx. Startup applies embedded migrations, seeds missing ETH/BTC metadata and ETH/BTC plus BTC/ETH pairs, then restores pending limits.
 - **Matching:** `matching-engine` processes price crossings against a `orderbook` instance held in shared API state per pair. `shared` contains engine order types. Engine memory is local to the API process.
@@ -17,14 +17,16 @@ flowchart LR
   API[Axum API]
   DB[(PostgreSQL)]
   Engine[Per-pair in-memory matcher]
-  Binance[Binance public ETHBTC WebSocket]
+  BinanceWS[Binance public ETHBTC ticker and kline WebSocket]
+  BinanceREST[Binance public ETHBTC klines REST]
   CG[CoinGecko public REST]
   Vault[Standalone SettlementVault]
   Browser -->|Bearer token on order routes| API
   API -->|validate RS256 / JWKS| Auth0
   API --> DB
   API --> Engine
-  Browser -->|public ticker subscription| Binance
+  Browser -->|public ticker and selected-interval kline subscription| BinanceWS
+  Browser -->|up to 500 historical candles| BinanceREST
   Browser -->|USD price and 24h reference polling| CG
   Hardhat[Hardhat local test runtime] --> Vault
   Engine -. no settlement integration .-> Vault

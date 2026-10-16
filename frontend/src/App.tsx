@@ -1,17 +1,20 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react'
 import { useAuth0 } from '@auth0/auth0-react'
 import { DEMO_TOKENS } from './data/demoData'
 import { getVisibleMarkets, selectMarketToken, type MarketFilter } from './domain/marketSelection'
 import { activityFilters, filterOrders, type ActivityFilter } from './domain/orderActivity'
 import { loadThemePreference, saveThemePreference } from './domain/themePreference'
 import { applyMarketPrices, getMarketPrices, MARKET_PRICE_REFRESH_MS, MARKET_PRICE_SYMBOLS, type MarketPrices } from './services/marketDataService'
+import { isMarketPair, MARKET_CANDLE_INTERVALS, type MarketCandleInterval, type MarketCandleUpdate, type MarketPair } from './services/marketCandleService'
 import { subscribeToMarketTicker, type MarketConnectionStatus } from './services/marketTickerService'
+import OrderBookDepth from './components/OrderBookDepth'
 import { cancelOrder, createOrder, getOrder, listOrders, type ApiOrderSide, type Order } from './services/orderService'
 import { getMarketTokens } from './services/tokenService'
 import type { Token } from './types'
 import './App.css'
 
-const supportedPairs = ['ETH/BTC', 'BTC/ETH']
+const MarketChart = lazy(() => import('./components/MarketChart'))
+const supportedPairs: MarketPair[] = ['ETH/BTC', 'BTC/ETH']
 type ChartTab = 'chart' | 'depth' | 'info'
 type OrderPanelTab = 'entry' | 'orders'
 
@@ -67,6 +70,8 @@ function App() {
   })
   const [selectedToken, setSelectedToken] = useState('ETH')
   const [tradingPair, setTradingPair] = useState('ETH/BTC')
+  const [chartInterval, setChartInterval] = useState<MarketCandleInterval>('1m')
+  const [marketCandle, setMarketCandle] = useState<(MarketCandleUpdate & { receivedAt: number }) | null>(null)
   const [marketSearch, setMarketSearch] = useState('')
   const [marketFilter, setMarketFilter] = useState<MarketFilter>('all')
   const [chartTab, setChartTab] = useState<ChartTab>('chart')
@@ -113,13 +118,13 @@ function App() {
         ? `CoinGecko REST unavailable · showing stale USD references from ${marketUpdatedAt}`
         : 'CoinGecko REST unavailable · showing seeded/demo USD references'
   const marketStreamMessage = marketStream.status === 'connecting'
-    ? `Binance WebSocket · ETHBTC · connecting · last update received ${marketStreamUpdatedAt || 'not received yet'}${marketStream.updatedAt ? ' · showing stale price' : ''}`
+    ? `Binance WebSocket · ETHBTC ticker + ${chartInterval} kline · connecting · last ticker update ${marketStreamUpdatedAt || 'not received yet'}${marketStream.updatedAt ? ' · showing stale price' : ''}`
     : marketStream.status === 'live'
-      ? `Binance WebSocket · ETHBTC · live · last update received ${marketStreamUpdatedAt}`
+      ? `Binance WebSocket · ETHBTC ticker + ${chartInterval} kline · live · last ticker update ${marketStreamUpdatedAt}`
       : marketStream.status === 'reconnecting'
-        ? `Binance WebSocket · ETHBTC · reconnecting · last update received ${marketStreamUpdatedAt || 'not received yet'}${marketStream.updatedAt ? ' · price is stale' : ''}`
-        : `Binance WebSocket · ETHBTC · disconnected/stale · last update received ${marketStreamUpdatedAt || 'not received yet'}`
-  const orderPairSupported = supportedPairs.includes(tradingPair)
+        ? `Binance WebSocket · ETHBTC ticker + ${chartInterval} kline · reconnecting · last ticker update ${marketStreamUpdatedAt || 'not received yet'}${marketStream.updatedAt ? ' · price is stale' : ''}`
+        : `Binance WebSocket · ETHBTC ticker + ${chartInterval} kline · disconnected/stale · last ticker update ${marketStreamUpdatedAt || 'not received yet'}`
+  const orderPairSupported = isMarketPair(tradingPair)
   const visibleOrders = isAuthenticated && user?.sub === ordersOwnerSubject ? orders : []
   const openOrders = visibleOrders.filter((order) => order.status === 'Pending')
   const activityOrders = filterOrders(visibleOrders, activityFilter)
@@ -197,7 +202,8 @@ function App() {
       price,
       updatedAt: receivedAt,
     })),
-  }), [retryMarketStream])
+    onCandle: setMarketCandle,
+  }, chartInterval), [chartInterval, retryMarketStream])
 
   useEffect(() => {
     if (apiStatus !== 'connected' || authLoading || !isAuthenticated || !user?.sub) return
@@ -241,7 +247,7 @@ function App() {
     const selection = selectMarketToken(symbol, baseSymbol, quoteSymbol, tokens)
     setSelectedToken(selection.selectedToken)
     const nextPair = `${selection.fromToken}/${selection.toToken}`
-    if (supportedPairs.includes(nextPair)) setTradingPair(nextPair)
+    if (isMarketPair(nextPair)) setTradingPair(nextPair)
   }
 
   const submitOrder = async (event: FormEvent<HTMLFormElement>) => {
@@ -387,14 +393,14 @@ function App() {
       <div className="page-content">
         <section className="trade-section" id="trade">
           <div className="page-heading trade-heading">
-            <div><p className="eyebrow">DEXSYS TESTNET</p><h1>Trade</h1><p className="page-description">Limit-order trading workspace. Pair spot prices stream from Binance; CoinGecko REST supplies USD references and 24-hour changes. Token metadata and sample balances are seeded.</p></div>
+            <div><p className="eyebrow">DEXSYS TESTNET</p><h1>Trade</h1><p className="page-description">Limit-order trading workspace. Binance spot ticker and historical/live candles are market references; CoinGecko REST supplies USD references and 24-hour changes. Token metadata and sample balances are seeded.</p></div>
             <span className="environment-badge"><i /> TEST ENVIRONMENT</span>
           </div>
 
           <div className="market-summary">
             <div className="summary-pair">
               <span className="token-avatar">{baseToken.icon}</span>
-              <div><strong>{tradingPair}</strong><small>Binance spot stream · {orderPairSupported ? 'order entry enabled' : 'unsupported pair'}</small></div>
+              <div><strong>{tradingPair}</strong><small>Binance spot market data · {orderPairSupported ? 'order entry enabled' : 'unsupported pair'}</small></div>
               <select value={tradingPair} onChange={(event) => setTradingPair(event.target.value)} aria-label="Trading pair">
                 {supportedPairs.map((pair) => <option key={pair} value={pair}>{pair}</option>)}
               </select>
@@ -408,28 +414,31 @@ function App() {
             <section className="panel chart-panel" aria-label="Market chart and order book">
               <div className="chart-toolbar">
                 <div className="chart-tabs" role="tablist" aria-label="Market data view">
-                  {(['chart', 'depth', 'info'] as const).map((tab) => <button key={tab} type="button" role="tab" aria-selected={chartTab === tab} className={chartTab === tab ? 'selected' : ''} disabled={tab === 'depth'} title={tab === 'depth' ? 'Live order-book depth is not available' : undefined} onClick={() => setChartTab(tab)}>{tab[0].toUpperCase() + tab.slice(1)}</button>)}
+                  {(['chart', 'depth', 'info'] as const).map((tab) => <button key={tab} type="button" role="tab" aria-selected={chartTab === tab} className={chartTab === tab ? 'selected' : ''} onClick={() => setChartTab(tab)}>{tab[0].toUpperCase() + tab.slice(1)}</button>)}
                 </div>
-                <div className="timeframes" aria-label="Historical intervals unavailable">{['5m', '15m', '1h', '4h', '1d'].map((interval) => <button key={interval} type="button" disabled title="Historical price data is not available">{interval}</button>)}</div>
+                <div className="timeframes" role="group" aria-label="Chart interval">{MARKET_CANDLE_INTERVALS.map((interval) => <button key={interval} type="button" className={chartInterval === interval ? 'selected' : ''} aria-pressed={chartInterval === interval} onClick={() => {
+                  setChartInterval(interval)
+                  setMarketCandle(null)
+                }}>{interval}</button>)}</div>
               </div>
-              {chartTab === 'chart' && <div className="chart-empty" role="img" aria-label="Historical market chart unavailable">
-                <span className="chart-icon" aria-hidden="true">⌁</span>
-                <strong>Market history unavailable</strong>
-                <p>DexSYS has no historical price feed connected. No chart values are simulated.</p>
-              </div>}
+              {chartTab === 'chart' && <Suspense fallback={<div className="chart-empty" role="status">Loading chart library…</div>}>
+                <MarketChart
+                  key={`${tradingPair}:${chartInterval}`}
+                  pair={tradingPair === 'BTC/ETH' ? 'BTC/ETH' : 'ETH/BTC'}
+                  interval={chartInterval}
+                  liveUpdate={marketCandle}
+                  connectionStatus={marketStream.status}
+                  theme={theme}
+                />
+              </Suspense>}
+              {chartTab === 'depth' && <OrderBookDepth key={tradingPair} pair={tradingPair} />}
               {chartTab === 'info' && <div className="chart-info">
                 <span className="eyebrow">PAIR INFORMATION</span>
                 <h2>{tradingPair}</h2>
-                <p>Trading pair is enabled in the seeded backend registry. Spot price streams from Binance; 24-hour reference change is derived from CoinGecko USD data. Volume and liquidity are unavailable.</p>
+                <p>Binance ETHBTC spot ticker and exchange kline data power the market chart; BTC/ETH displays the mathematically inverted ETHBTC prices. CoinGecko USD reference changes are separate from pair prices. Binance volume is not displayed or represented as DexSYS trading volume.</p>
                 <div><span>Matching</span><strong>In-memory limit-order engine</strong></div>
                 <div><span>Settlement</span><strong>Not connected to chain</strong></div>
               </div>}
-              <div className="chart-footnote"><span>MARKET DATA</span><span>Spot only · history unavailable</span></div>
-              <div className="orderbook">
-                <div className="panel-heading compact"><div><h2>Order book</h2><p>Live depth feed unavailable</p></div><span className="data-badge">NO LIVE DATA</span></div>
-                <div className="orderbook-head"><span>PRICE</span><span>SIZE</span><span>TOTAL</span></div>
-                <div className="orderbook-empty">Order-book levels are not provided by the API.</div>
-              </div>
             </section>
 
             <aside className="panel trade-panel">

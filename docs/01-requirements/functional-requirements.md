@@ -21,7 +21,9 @@
 | FR-12 | Show CoinGecko USD references and 24-hour change, refreshing on the configured interval with loading/error/stale handling. | Implemented | `frontend/src/services/marketDataService.ts`, `App.tsx` | `marketDataService.test.ts`; provider availability is external |
 | FR-13 | Display seeded token metadata/balances only as reference/demo values; do not imply connected-wallet holdings. | Implemented | API `repository.rs`, `frontend/src/data/demoData.ts`, `App.tsx` | `tokenService.test.ts`; manual UI verification |
 | FR-14 | `SettlementVault` permits its caller to deposit positive native ETH and withdraw up to their recorded balance; failed recipient transfer reverts accounting. | Implemented, standalone | `contracts/contracts/core/SettlementVault.sol` | Six tests in `contracts/test/SettlementVault.ts` |
-| FR-15 | Keep wallet signing, balance validation, blockchain settlement, chart history, live book depth, and volume unavailable unless an implementation is added. | Implemented as boundary | `frontend/src/App.tsx`; no corresponding API or integration | Manual UI check; absence corroborated by route/source inventory |
+| FR-15 | Keep wallet signing, balance validation, blockchain settlement, depth streaming, and DexSYS trade volume unavailable; identify external chart data as market reference only. | Implemented as boundary | `frontend/src/App.tsx`, `frontend/src/components/MarketChart.tsx` | Manual UI check; absence corroborated by route/source inventory |
+| FR-16 | Display validated Binance ETHBTC historical/live candlesticks for ETH/BTC and reciprocal BTC/ETH on 1m, 5m, and 15m intervals, without presenting the data as DexSYS executions. | Implemented as external market data | `frontend/src/services/marketCandleService.ts`, `marketTickerService.ts`, `frontend/src/components/MarketChart.tsx` | `marketCandleService.test.ts`, `marketTickerService.test.ts`; browser verification |
+| FR-17 | Expose read-only aggregated local order-book levels and render a polled cumulative depth view without exposing engine mutation or using external liquidity. | Implemented | `backend/crates/api/src/routes/market.rs`, `backend/crates/orderbook/src/lib.rs`, `frontend/src/components/OrderBookDepth.tsx` | API/orderbook unit tests; `frontend/src/services/orderBookService.test.ts` |
 
 ### Traceability notes
 
@@ -39,7 +41,7 @@ The following ideas appear in early project language or may be future goals. The
 | FUT-01 | Wallet connection/signing, SIWE, and wallet-derived balances | Not implemented |
 | FUT-02 | On-chain trade settlement, approvals, or vault integration with API trades | Not implemented |
 | FUT-03 | AMM swaps, pools, liquidity provision/withdrawal | Not implemented |
-| FUT-04 | Public orderbook/trade-history API and live depth stream | Not implemented |
+| FUT-04 | Trade-history API and live depth streaming (read-only REST book snapshots are implemented) | Not implemented |
 | FUT-05 | Historical charts, volume, and richer market subscriptions | Not implemented |
 | FUT-06 | Governance, notifications, portfolio, transfers, and transaction tracking | Not implemented |
 | FUT-07 | Production deployment, operational monitoring, and automated CI/CD | Not configured |

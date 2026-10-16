@@ -1,0 +1,261 @@
+.orderbook-depth {
+  min-height: 272px;
+  padding: 15px;
+  color: var(--text);
+}
+
+.depth-heading,
+.depth-update-note,
+.depth-sides {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.depth-heading {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.depth-heading h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.depth-heading p {
+  margin: 4px 0 0;
+  color: var(--text-soft);
+  font-size: var(--font-caption);
+}
+
+.depth-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-soft);
+  font-size: var(--font-caption);
+  font-weight: 700;
+}
+
+.depth-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.depth-status.polling i {
+  background: var(--positive);
+}
+
+.depth-status.stale i {
+  background: #d4a04e;
+}
+
+.depth-status.unavailable i {
+  background: var(--negative);
+}
+
+.depth-update-note {
+  justify-content: flex-start;
+  padding: 10px 0 2px;
+  color: var(--text-faint);
+  font-size: 10px;
+  letter-spacing: .04em;
+}
+
+.depth-chart-wrap {
+  padding: 12px 0 5px;
+}
+
+.depth-chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--text-soft);
+  font-size: 10px;
+  letter-spacing: .05em;
+}
+
+.depth-bid-key {
+  color: var(--positive);
+}
+
+.depth-ask-key {
+  color: var(--negative);
+}
+
+.depth-chart {
+  display: block;
+  width: 100%;
+  height: 220px;
+  overflow: visible;
+}
+
+.depth-grid-line {
+  stroke: var(--border-soft);
+  stroke-width: 1;
+}
+
+.depth-midpoint-line {
+  stroke: var(--text-faint);
+  stroke-dasharray: 3 4;
+  stroke-width: 1;
+}
+
+.depth-axis-label {
+  fill: var(--text-soft);
+  font-family: inherit;
+  font-size: 10px;
+}
+
+.depth-bid-area {
+  fill: color-mix(in srgb, var(--positive) 20%, transparent);
+  stroke: var(--positive);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.depth-ask-area {
+  fill: color-mix(in srgb, var(--negative) 18%, transparent);
+  stroke: var(--negative);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.depth-sides {
+  align-items: flex-start;
+  gap: 18px;
+  padding-top: 8px;
+}
+
+.depth-side {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.depth-side h3 {
+  margin: 0 0 7px;
+  color: var(--text);
+  font-size: var(--font-control);
+}
+
+.depth-table-scroll {
+  overflow-x: auto;
+}
+
+.depth-side table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-caption);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.depth-side th,
+.depth-side td {
+  padding: 6px 4px;
+  white-space: nowrap;
+}
+
+.depth-side th {
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.depth-side th:first-child,
+.depth-side td:first-child {
+  text-align: left;
+}
+
+.depth-side th span {
+  color: var(--text-soft);
+  font-weight: 400;
+}
+
+.depth-side-bids tbody td:first-child {
+  color: var(--positive);
+}
+
+.depth-side-asks tbody td:first-child {
+  color: var(--negative);
+}
+
+.depth-side td {
+  color: var(--text-soft);
+}
+
+.depth-side-empty,
+.depth-message {
+  color: var(--text-soft);
+  font-size: var(--font-caption);
+  text-align: center;
+}
+
+.depth-message {
+  display: flex;
+  min-height: 180px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 20px;
+}
+
+.depth-message strong {
+  color: var(--text);
+  font-size: var(--font-control);
+}
+
+.depth-message span {
+  max-width: 430px;
+  line-height: 1.5;
+}
+
+.depth-message button {
+  min-height: 32px;
+  margin-top: 3px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-raised);
+  color: var(--accent-strong);
+  cursor: pointer;
+}
+
+.depth-warning {
+  margin: 8px 0;
+  color: #d4a04e;
+  font-size: var(--font-caption);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 560px) {
+  .orderbook-depth {
+    padding: 12px 10px;
+  }
+
+  .depth-sides {
+    flex-direction: column;
+    gap: 13px;
+  }
+
+  .depth-side {
+    width: 100%;
+  }
+
+  .depth-chart {
+    height: 185px;
+  }
+
+  .depth-update-note {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+}

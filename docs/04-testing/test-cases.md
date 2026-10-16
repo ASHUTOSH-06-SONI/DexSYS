@@ -7,10 +7,12 @@
 | TC-FE-03 | Frontend | Activity filter includes expected order states. | `frontend/src/domain/orderActivity.test.ts` |
 | TC-FE-04 | Frontend | Order DTO validation, HTTP status/error paths, calls. | `frontend/src/services/orderService.test.ts` |
 | TC-FE-05 | Frontend | CoinGecko payload validation and USD quote mapping. | `frontend/src/services/marketDataService.test.ts` |
-| TC-FE-06 | Frontend | Binance ticker parsing, state transitions, reconnect delay, teardown behavior. | `frontend/src/services/marketTickerService.test.ts` |
+| TC-FE-06 | Frontend | Binance ticker/kline parsing, candle normalization and updates, interval handling, reconnect delay, and teardown behavior. | `frontend/src/services/marketTickerService.test.ts`, `frontend/src/services/marketCandleService.test.ts` |
+| TC-FE-09 | Frontend | Depth response validation, pair identity, level ordering, cumulative quantities, empty books, and API errors. | `frontend/src/services/orderBookService.test.ts` |
 | TC-FE-07 | Frontend | Local domain orderbook fixture behavior; this fixture is not a live backend book. | `frontend/src/domain/orderBook.test.ts` |
 | TC-FE-08 | Frontend | Local quote/state and persisted theme preference behavior. | `swapQuote.test.ts`, `swapState.test.ts`, `themePreference.test.ts` |
 | TC-RS-01 | Rust | Order validation, exact fixed-point conversion, matching, book priority/FIFO, Auth0 validation. | `backend/crates/*/src`, especially API auth/matching and engine/book modules |
+| TC-RS-02 | Rust | Integer-aggregated bid/ask levels, sorting, overflow/invalid quantity rejection, cumulative quantities, empty books, and public depth endpoint response. | `backend/crates/orderbook/src/lib.rs`, `backend/crates/api/src/routes/market.rs` |
 | TC-DB-01 | API/DB | Migrations, seeded token/pair, persistence, executed quantity/status, ownership, cancellation, restart restoration. | `backend/crates/api/tests/persistence.rs`; four ignored PostgreSQL cases |
 | TC-SC-01 | Solidity | Vault deposits; partial/full withdrawal; zero/over-balance rejection; accepting and rejecting contract recipients. | Six cases in `contracts/test/SettlementVault.ts` |
 
@@ -19,7 +21,8 @@
 - Configure Auth0 callback/logout/web origin and API audience; sign in, create a unique-ID limit order, refresh order, and verify list scoping.
 - Use two distinct Auth0 principals; verify neither can read or cancel the other's order and API returns `404`.
 - Cancel a pending order and confirm it leaves the open list; repeat cancellation and observe conflict.
-- Confirm frontend displays pair quotes/connection state independently from matching state and labels unavailable history, depth, volume, balances, and settlement.
+- Confirm frontend shows Binance candlestick history/live updates independently from matching state, and labels depth, DexSYS volume, balances, and settlement limitations.
+- Submit resting buy and sell limit orders, open the Depth tab, and verify the matching-engine levels refresh by polling; cancel orders and confirm they disappear. Verify an empty pair shows no fabricated depth.
 - Disconnect provider/network access and verify error/stale/retry states without treating a retained price as live.
 - Check desktop and mobile breakpoints manually; no accessibility audit is implied.
 - Do not test or claim production deployment or on-chain order settlement; neither is available.
