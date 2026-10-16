@@ -26,7 +26,8 @@ async fn main() {
         .await
         .expect("Failed to restore persisted limit orders into the in-memory orderbooks");
     let authenticator = Authenticator::from_env().expect("Invalid Auth0 configuration");
-    let app = routes::router(authenticator).with_state(state);
+    let cors = routes::cors_layer_from_env().expect("Invalid CORS configuration");
+    let app = routes::router(authenticator).layer(cors).with_state(state);
     let port: u16 = std::env::var("PORT")
         .ok()
         .filter(|value| !value.trim().is_empty())

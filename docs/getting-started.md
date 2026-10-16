@@ -25,9 +25,10 @@ Edit the root `.env` with:
 DATABASE_URL=postgresql://localhost/dexsys
 AUTH0_DOMAIN=your-tenant.example.auth0.com
 AUTH0_AUDIENCE=https://api.dexsys.local
+CORS_ALLOWED_ORIGINS=http://localhost:5173
 ```
 
-Use your actual Auth0 tenant hostname. Do not include `https://` or a path in `AUTH0_DOMAIN`; `AUTH0_AUDIENCE` must match the Auth0 API and frontend. `.env.example` only contains `DATABASE_URL`; Auth0 values must be supplied locally. Never commit `.env`.
+Use your actual Auth0 tenant hostname. Do not include `https://` or a path in `AUTH0_DOMAIN`; `AUTH0_AUDIENCE` must match the Auth0 API and frontend. `CORS_ALLOWED_ORIGINS` is a comma-separated list of exact browser origins (scheme and host only); add each local or deployed frontend origin explicitly. Never use `*`. Never commit `.env`.
 
 Start the API in terminal 1, from repository root:
 
@@ -35,7 +36,7 @@ Start the API in terminal 1, from repository root:
 cargo run --manifest-path backend/Cargo.toml -p api
 ```
 
-On startup it connects to PostgreSQL, applies migrations, inserts missing demo metadata/pairs, restores pending limit orders, and listens at `http://127.0.0.1:8080`. Confirm with `curl http://127.0.0.1:8080/health`.
+On startup it connects to PostgreSQL, applies migrations, inserts missing demo metadata/pairs, restores pending limit orders, and listens on `0.0.0.0:$PORT` (default port `8080`). Confirm locally with `curl http://127.0.0.1:8080/health`.
 
 ## 2. Configure and start the frontend
 

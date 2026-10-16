@@ -73,7 +73,7 @@ There is no checked-in deployment infrastructure, container definition, workflow
 
 Use native Rust/Cargo, Node.js/npm, and PostgreSQL; Docker Desktop is not required. Configure local PostgreSQL and Auth0 as described in [getting started](./docs/getting-started.md).
 
-From repository root, create/edit `.env` with `DATABASE_URL`, `AUTH0_DOMAIN`, and optionally `AUTH0_AUDIENCE`, then start:
+From repository root, create/edit `.env` with `DATABASE_URL`, `AUTH0_DOMAIN`, `CORS_ALLOWED_ORIGINS` (exact comma-separated frontend origins), and optionally `AUTH0_AUDIENCE`, then start:
 
 ```sh
 cargo run --manifest-path backend/Cargo.toml -p api

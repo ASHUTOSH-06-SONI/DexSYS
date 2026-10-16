@@ -9,8 +9,9 @@ Environment names are taken from the current source and checked-in safe examples
 | `DATABASE_URL` | Yes | PostgreSQL connection string. Root `.env.example` contains `postgresql://localhost/dexsys`. |
 | `AUTH0_DOMAIN` | Yes at API startup | Auth0 tenant hostname only, e.g. `tenant.example.auth0.com` (no `https://` or path). |
 | `AUTH0_AUDIENCE` | No | API audience; backend default is `https://api.dexsys.local`. Must match the Auth0 API and frontend value. |
+| `CORS_ALLOWED_ORIGINS` | Yes at API startup | Comma-separated exact HTTP(S) frontend origins, e.g. `https://dexsys.netlify.app,https://trade.example.com`. Do not include paths or use `*`. |
 
-The API loads `.env` from repository root if present, migrates the database, seeds missing records, and binds to `127.0.0.1:8080`.
+The API loads `.env` from repository root if present, migrates the database, seeds missing records, and binds to `0.0.0.0:$PORT` (`8080` when `PORT` is missing or blank). CORS allows only the origins in `CORS_ALLOWED_ORIGINS`; set local development origins such as `http://localhost:5173` explicitly when needed. Preflight OPTIONS requests are handled by the CORS layer before route authentication.
 
 ## `frontend/.env`
 
