@@ -27,10 +27,14 @@ async fn main() {
         .expect("Failed to restore persisted limit orders into the in-memory orderbooks");
     let authenticator = Authenticator::from_env().expect("Invalid Auth0 configuration");
     let app = routes::router(authenticator).with_state(state);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
+    let port: u16 = std::env::var("PORT")
+        .unwrap_or_else(|_| "8080".to_string())
+        .parse()
+        .expect("PORT must be a valid port number");
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
         .await
-        .expect("Failed to bind API listener");
+        .expect("Failed to bind TCP listener");
 
-    println!("DexSYS API running at http://127.0.0.1:8080");
+    println!("DexSYS API listening on 0.0.0.0:{port}");
     axum::serve(listener, app).await.expect("API server failed");
 }
