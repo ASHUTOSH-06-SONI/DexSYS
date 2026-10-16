@@ -10,7 +10,7 @@ This specification records the observable requirements implemented by the curren
 
 ## System boundary
 
-The MVP is a browser client, an Axum HTTP API, PostgreSQL persistence, and an in-process Rust limit-order matcher. Auth0 access tokens identify API users. External market data comes directly from Binance's public ETHBTC ticker WebSocket and CoinGecko's public USD-price REST endpoint. A standalone Solidity `SettlementVault` accepts and returns native ETH, but no order/trade path calls it.
+The MVP is a browser client, an Axum HTTP API, PostgreSQL persistence, and an in-process Rust limit-order matcher. Auth0 access tokens identify API users. External market data comes directly from Binance's public ETHBTC ticker/kline WebSocket and historical kline REST endpoint, and CoinGecko's public USD-price REST endpoint. A standalone Solidity `SettlementVault` accepts and returns native ETH, but no order/trade path calls it.
 
 The order book is an off-chain prototype. A database record marked `Filled` or an engine-produced row in `trades` means the Rust matcher recorded a simulated execution; it does **not** mean assets were transferred or settled on-chain. This distinction is fundamental to every MVP claim.
 
@@ -24,7 +24,7 @@ The order book is an off-chain prototype. A database record marked `Filled` or a
 
 ## Explicitly outside the delivered system
 
-There is no wallet provider/signing, wallet balance verification, balance reservation, AMM, on-chain trade settlement, contract/API integration, public orderbook/trades API, historical chart feed, live depth feed, or volume feed. Token balances and backend USD values are seeded reference values. Deployment and automated CI are not configured in this repository.
+There is no wallet provider/signing, wallet balance verification, balance reservation, AMM, on-chain trade settlement, contract/API integration, trade-history API, order-book WebSocket, or DexSYS volume feed. A public read-only REST endpoint exposes aggregated resting levels from the in-memory matching engine; the frontend polls it while the Depth tab is selected. The frontend chart is an external Binance market-data reference, not DexSYS execution data. Token balances and backend USD values are seeded reference values. Deployment and automated CI are not configured in this repository.
 
 ## Operating assumptions and constraints
 

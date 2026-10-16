@@ -1,6 +1,8 @@
-use shared::{Order, OrderSide, OrderType};
-use std::collections::VecDeque;
+use shared::{Order, OrderSide};
+#[cfg(test)]
+use shared::OrderType;
 use std::collections::BTreeMap;
+use std::collections::VecDeque;
 
 #[derive(Clone)]
 pub struct PriceLevel {
@@ -12,6 +14,19 @@ pub struct PriceLevel {
 pub struct OrderBook {
     pub bids: BTreeMap<i64, PriceLevel>,
     pub asks: BTreeMap<i64, PriceLevel>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AggregatedLevel {
+    pub price: i64,
+    pub quantity: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DepthError {
+    InvalidPrice,
+    InvalidQuantity,
+    QuantityOverflow,
 }
 
 impl OrderBook {
@@ -39,6 +54,15 @@ impl OrderBook {
     pub fn best_ask(&self) -> Option<&PriceLevel> {
         self.asks.first_key_value().map(|(_, level)| level)
     }
+
+    pub fn aggregated_bids(&self) -> Result<Vec<AggregatedLevel>, DepthError> {
+        aggregate_levels(self.bids.iter().rev())
+    }
+
+    pub fn aggregated_asks(&self) -> Result<Vec<AggregatedLevel>, DepthError> {
+        aggregate_levels(self.asks.iter())
+    }
+
     pub fn cancel_order(&mut self, order_id: &str)->bool{
         let location = {
             let mut found = None;
@@ -69,6 +93,33 @@ impl OrderBook {
         }
         true
     }
+}
+
+fn aggregate_levels<'a>(
+    levels: impl Iterator<Item = (&'a i64, &'a PriceLevel)>,
+) -> Result<Vec<AggregatedLevel>, DepthError> {
+    levels
+        .map(|(price, level)| {
+            if *price <= 0 {
+                return Err(DepthError::InvalidPrice);
+            }
+            let quantity = level.orders.iter().try_fold(0_i64, |total, order| {
+                if order.quantity <= 0 {
+                    return Err(DepthError::InvalidQuantity);
+                }
+                total
+                    .checked_add(order.quantity)
+                    .ok_or(DepthError::QuantityOverflow)
+            })?;
+            if quantity == 0 {
+                return Err(DepthError::InvalidQuantity);
+            }
+            Ok(AggregatedLevel {
+                price: *price,
+                quantity,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -239,6 +290,96 @@ fn test_bid_and_ask_are_separate() {
     assert_eq!(book.best_bid().unwrap().price, 3500);
     assert_eq!(book.best_ask().unwrap().price, 3510);
 }
+
+#[test]
+fn aggregated_depth_sorts_levels_and_sums_quantities() {
+    let mut book = OrderBook::new();
+    for (id, side, price, quantity) in [
+        ("bid-1", OrderSide::Buy, 100, 4),
+        ("bid-2", OrderSide::Buy, 100, 3),
+        ("bid-3", OrderSide::Buy, 105, 2),
+        ("ask-1", OrderSide::Sell, 110, 5),
+        ("ask-2", OrderSide::Sell, 110, 1),
+        ("ask-3", OrderSide::Sell, 115, 6),
+    ] {
+        book.add_order(Order {
+            id: id.to_string(),
+            user_id: "user".to_string(),
+            trading_pair: "ETH/BTC".to_string(),
+            side,
+            order_type: OrderType::Limit,
+            price: Some(price),
+            quantity,
+        });
+    }
+
+    assert_eq!(
+        book.aggregated_bids().unwrap(),
+        vec![
+            AggregatedLevel {
+                price: 105,
+                quantity: 2
+            },
+            AggregatedLevel {
+                price: 100,
+                quantity: 7
+            }
+        ]
+    );
+    assert_eq!(
+        book.aggregated_asks().unwrap(),
+        vec![
+            AggregatedLevel {
+                price: 110,
+                quantity: 6
+            },
+            AggregatedLevel {
+                price: 115,
+                quantity: 6
+            }
+        ]
+    );
+}
+
+#[test]
+fn aggregated_depth_is_empty_when_book_has_no_orders() {
+    let book = OrderBook::new();
+    assert!(book.aggregated_bids().unwrap().is_empty());
+    assert!(book.aggregated_asks().unwrap().is_empty());
+}
+
+#[test]
+fn aggregated_depth_rejects_overflow_and_invalid_quantities() {
+    let mut book = OrderBook::new();
+    for (id, quantity) in [("large", i64::MAX), ("overflow", 1)] {
+        book.add_order(Order {
+            id: id.to_string(),
+            user_id: "user".to_string(),
+            trading_pair: "ETH/BTC".to_string(),
+            side: OrderSide::Buy,
+            order_type: OrderType::Limit,
+            price: Some(100),
+            quantity,
+        });
+    }
+    assert_eq!(book.aggregated_bids(), Err(DepthError::QuantityOverflow));
+
+    let mut invalid_book = OrderBook::new();
+    invalid_book.add_order(Order {
+        id: "invalid".to_string(),
+        user_id: "user".to_string(),
+        trading_pair: "ETH/BTC".to_string(),
+        side: OrderSide::Buy,
+        order_type: OrderType::Limit,
+        price: Some(100),
+        quantity: 0,
+    });
+    assert_eq!(
+        invalid_book.aggregated_bids(),
+        Err(DepthError::InvalidQuantity)
+    );
+}
+
 #[test]
 fn test_multiple_price_levels() {
     let mut book = OrderBook::new();

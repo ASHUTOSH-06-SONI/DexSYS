@@ -8,7 +8,7 @@ flowchart TB
     UI[Trade, markets, activity, protocol views]
     AuthSDK[Auth0 React SDK]
     ApiClient[API client and DTO validation]
-    Ticker[Binance ticker service]
+    MarketData[Binance ticker and kline service]
     Prices[CoinGecko price service]
   end
   subgraph Backend["Rust API process"]
@@ -21,7 +21,8 @@ flowchart TB
   end
   DB[(PostgreSQL)]
   AuthProvider[Auth0]
-  Binance[Binance ETHBTC ticker]
+  BinanceWS[Binance ETHBTC ticker and kline WebSocket]
+  BinanceREST[Binance ETHBTC historical klines REST]
   CoinGecko[CoinGecko simple/price]
   Vault[SettlementVault]
   UI --> AuthSDK
@@ -33,7 +34,8 @@ flowchart TB
   Repos --> DB
   Routes --> State
   State --> Matcher --> Book
-  UI --> Ticker --> Binance
+  UI --> MarketData --> BinanceWS
+  UI -->|historical candles| BinanceREST
   UI --> Prices --> CoinGecko
   Matcher -. persisted execution record only; no chain transfer .-> Vault
 ```

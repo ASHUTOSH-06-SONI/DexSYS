@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  getMarketCombinedStreamUrl,
   getMarketTickerRetryDelay,
   MARKET_TICKER_MAX_RETRY_MS,
   parseMarketTickerMessage,
@@ -40,6 +41,7 @@ class FakeWebSocket {
 describe('marketTickerService', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    vi.setSystemTime(1_800_000_000_000)
     FakeWebSocket.instances = []
     vi.stubGlobal('WebSocket', FakeWebSocket)
   })
@@ -78,6 +80,99 @@ describe('marketTickerService', () => {
     expect(getMarketTickerRetryDelay(5)).toBe(16_000)
     expect(getMarketTickerRetryDelay(8)).toBe(MARKET_TICKER_MAX_RETRY_MS)
     expect(getMarketTickerRetryDelay(20)).toBe(MARKET_TICKER_MAX_RETRY_MS)
+  })
+
+  it('combines ticker and kline streams and reconnects with the selected interval', () => {
+    const onStatus = vi.fn()
+    const onTicker = vi.fn()
+    const onCandle = vi.fn()
+    const unsubscribe = subscribeToMarketTicker({ onStatus, onTicker, onCandle }, '5m')
+    const firstSocket = FakeWebSocket.instances[0]
+    const startedAt = Date.now()
+    expect(getMarketCombinedStreamUrl('5m')).toBe(
+      'wss://stream.binance.com:9443/stream?streams=ethbtc@ticker/ethbtc@kline_5m',
+    )
+
+    firstSocket.onopen?.call(firstSocket as unknown as WebSocket, {} as Event)
+    expect(onStatus).toHaveBeenLastCalledWith('connecting')
+    firstSocket.emitMessage(JSON.stringify({
+      stream: 'ethbtc@ticker',
+      data: { e: '24hrTicker', s: 'ETHBTC', c: '0.03' },
+    }))
+    expect(onTicker).toHaveBeenLastCalledWith({
+      symbol: 'ETHBTC',
+      price: 0.03,
+      receivedAt: startedAt,
+    })
+    expect(onStatus).toHaveBeenLastCalledWith('live')
+
+    vi.advanceTimersByTime(4_000)
+    firstSocket.emitMessage(JSON.stringify({
+      stream: 'ethbtc@kline_5m',
+      data: {
+        e: 'kline',
+        s: 'ETHBTC',
+        k: { t: 1_728_000_000_000, i: '5m', o: '0.05', h: '0.06', l: '0.04', c: '0.055', v: '12', q: '0.66', x: false },
+      },
+    }))
+    expect(onCandle).toHaveBeenCalledWith(expect.objectContaining({
+      symbol: 'ETHBTC',
+      interval: '5m',
+      receivedAt: startedAt + 4_000,
+      candle: expect.objectContaining({ close: 0.055 }),
+    }))
+    expect(onCandle.mock.calls[0][0].candle.time).toBe(1_728_000_000)
+    expect(onCandle.mock.calls[0][0].receivedAt).toBeGreaterThan(onCandle.mock.calls[0][0].candle.time)
+
+    vi.advanceTimersByTime(1_000)
+    firstSocket.emitMessage(JSON.stringify({
+      stream: 'ethbtc@kline_5m',
+      data: {
+        e: 'kline',
+        s: 'ETHBTC',
+        k: { t: 1_728_000_000_000, i: '5m', o: '0.05', h: '0.06', l: '0.04', c: '0.055', v: '12', q: '0.66', x: false },
+      },
+    }))
+    expect(onCandle).toHaveBeenCalledTimes(2)
+    expect(onCandle.mock.calls[1][0].receivedAt).toBe(startedAt + 5_000)
+
+    const tickerCalls = onTicker.mock.calls.length
+    const candleCalls = onCandle.mock.calls.length
+    firstSocket.emitMessage(JSON.stringify({
+      stream: 'ethbtc@ticker',
+      data: { e: '24hrTicker', s: 'ETHBTC', c: '0' },
+    }))
+    firstSocket.emitMessage(JSON.stringify({
+      stream: 'ethbtc@kline_5m',
+      data: {
+        e: 'kline',
+        s: 'ETHBTC',
+        k: { t: 1_728_000_000_000, i: '1m', o: '0.05', h: '0.06', l: '0.04', c: '0.055', v: '12', q: '0.66', x: false },
+      },
+    }))
+    expect(onTicker).toHaveBeenCalledTimes(tickerCalls)
+    expect(onCandle).toHaveBeenCalledTimes(candleCalls)
+    expect(onStatus).toHaveBeenLastCalledWith('live')
+
+    firstSocket.close()
+    expect(onStatus).toHaveBeenLastCalledWith('reconnecting')
+    vi.advanceTimersByTime(getMarketTickerRetryDelay(1))
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    const secondSocket = FakeWebSocket.instances[1]
+    secondSocket.onopen?.call(secondSocket as unknown as WebSocket, {} as Event)
+    expect(onStatus).toHaveBeenLastCalledWith('reconnecting')
+
+    secondSocket.emitMessage(JSON.stringify({
+      stream: 'ethbtc@ticker',
+      data: { e: '24hrTicker', s: 'ETHBTC', c: '0.031' },
+    }))
+    expect(onTicker).toHaveBeenLastCalledWith({
+      symbol: 'ETHBTC',
+      price: 0.031,
+      receivedAt: startedAt + 6_000,
+    })
+    expect(onStatus).toHaveBeenLastCalledWith('live')
+    unsubscribe()
   })
 
   it('ignores malformed frames, reconnects after closure, and cleans up on unsubscribe', () => {

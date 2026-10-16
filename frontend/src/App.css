@@ -60,6 +60,7 @@
 .chart-tabs button:disabled, .timeframes button:disabled { cursor: not-allowed; opacity: .45; }
 .timeframes { display: flex; align-items: center; gap: 3px; }
 .timeframes button { min-width: 34px; height: 32px; padding: 0 5px; border: 0; border-radius: 3px; background: transparent; color: var(--text-soft); font-size: var(--font-caption); }
+.timeframes button.selected { background: var(--surface-raised); color: var(--accent-strong); font-weight: 700; }
 .chart-empty { display: flex; min-height: 272px; flex-direction: column; align-items: center; justify-content: center; padding: 28px; text-align: center; }
 .chart-icon { display: grid; width: 38px; height: 38px; place-items: center; margin-bottom: 13px; border: 1px solid var(--border); border-radius: 50%; color: var(--text-faint); font-size: 23px; }
 .chart-empty strong { color: var(--text); font-size: var(--font-control); font-weight: 650; }
@@ -70,16 +71,10 @@
 .chart-info > div { display: flex; max-width: 430px; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--border-soft); font-size: var(--font-caption); }
 .chart-info > div span { color: var(--text-faint); }
 .chart-info > div strong { color: var(--text-soft); font-weight: 600; text-align: right; }
-.chart-footnote { display: flex; justify-content: space-between; padding: 9px 15px; border-top: 1px solid var(--border-soft); color: var(--text-soft); font-size: var(--font-caption); letter-spacing: .05em; }
-.chart-footnote span:last-child { color: var(--text-soft); }
-.orderbook { padding: 13px 15px 16px; border-top: 1px solid var(--border); }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .panel-heading h2 { margin: 0; font-size: 18px; font-weight: 670; }
 .panel-heading p { margin: 4px 0 0; color: var(--text-soft); font-size: var(--font-caption); }
 .panel-heading.compact { margin-bottom: 12px; }
-.orderbook-head { display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 7px 3px; border-bottom: 1px solid var(--border-soft); color: var(--text-soft); font-size: var(--font-caption); letter-spacing: .05em; }
-.orderbook-head span:nth-child(2), .orderbook-head span:nth-child(3) { text-align: right; }
-.orderbook-empty { padding: 20px 6px; color: var(--text-soft); font-size: var(--font-caption); text-align: center; }
 .trade-panel { position: sticky; top: 77px; min-height: 530px; }
 .panel-tabs { display: flex; height: 46px; gap: 20px; padding: 0 17px; border-bottom: 1px solid var(--border-soft); }
 .panel-tabs button { display: flex; align-items: center; gap: 6px; }
@@ -255,7 +250,6 @@
   .timeframes { gap: 0; }
   .timeframes button { min-width: 27px; height: 30px; padding: 0 3px; font-size: var(--font-caption); }
   .chart-empty, .chart-info { min-height: 225px; }
-  .orderbook { padding-right: 11px; padding-left: 11px; }
   .order-form, .open-orders-panel { padding: 14px 12px; }
   .content-section { padding-top: 30px; }
   .section-heading h2 { font-size: 18px; }

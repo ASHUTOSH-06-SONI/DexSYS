@@ -1,4 +1,10 @@
-export const MARKET_TICKER_URL = 'wss://stream.binance.com:9443/ws/ethbtc@ticker'
+import {
+  MARKET_CANDLE_INTERVALS,
+  parseMarketKlineMessage,
+  type MarketCandleInterval,
+  type MarketCandleUpdate,
+} from './marketCandleService'
+
 export const MARKET_TICKER_MAX_RETRIES = 8
 export const MARKET_TICKER_BASE_RETRY_MS = 1_000
 export const MARKET_TICKER_MAX_RETRY_MS = 30_000
@@ -12,9 +18,11 @@ export type MarketTicker = {
 }
 
 type TickerUpdate = MarketTicker & { receivedAt: number }
+type CandleUpdate = MarketCandleUpdate & { receivedAt: number }
 type ConnectionCallbacks = {
   onStatus: (status: MarketConnectionStatus) => void
   onTicker: (ticker: TickerUpdate) => void
+  onCandle?: (update: CandleUpdate) => void
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -66,7 +74,17 @@ export function getMarketTickerRetryDelay(retry: number): number {
   return Math.min(MARKET_TICKER_BASE_RETRY_MS * 2 ** exponent, MARKET_TICKER_MAX_RETRY_MS)
 }
 
-export function subscribeToMarketTicker(callbacks: ConnectionCallbacks): () => void {
+export function getMarketCombinedStreamUrl(interval: MarketCandleInterval): string {
+  if (!MARKET_CANDLE_INTERVALS.includes(interval)) {
+    throw new Error(`Binance kline interval ${interval} is not supported.`)
+  }
+  return `wss://stream.binance.com:9443/stream?streams=ethbtc@ticker/ethbtc@kline_${interval}`
+}
+
+export function subscribeToMarketTicker(
+  callbacks: ConnectionCallbacks,
+  interval: MarketCandleInterval = '1m',
+): () => void {
   let active = true
   let status: MarketConnectionStatus = 'connecting'
   let retries = 0
@@ -102,7 +120,7 @@ export function subscribeToMarketTicker(callbacks: ConnectionCallbacks): () => v
 
     let connection: WebSocket
     try {
-      connection = new WebSocket(MARKET_TICKER_URL)
+      connection = new WebSocket(getMarketCombinedStreamUrl(interval))
     } catch {
       scheduleReconnect()
       return
@@ -111,10 +129,19 @@ export function subscribeToMarketTicker(callbacks: ConnectionCallbacks): () => v
     connection.onmessage = (event) => {
       if (!active || socket !== connection) return
       try {
-        const ticker = parseMarketTickerMessage(event.data)
-        retries = 0
-        setStatus('ticker')
-        callbacks.onTicker({ ...ticker, receivedAt: Date.now() })
+        const payload: unknown = JSON.parse(event.data)
+        const message = isRecord(payload) && 'data' in payload ? payload.data : payload
+        if (isRecord(message) && message.e === 'kline') {
+          const update = parseMarketKlineMessage(event.data, interval)
+          retries = 0
+          setStatus('ticker')
+          callbacks.onCandle?.({ ...update, receivedAt: Date.now() })
+        } else {
+          const ticker = parseMarketTickerMessage(JSON.stringify(message))
+          retries = 0
+          setStatus('ticker')
+          callbacks.onTicker({ ...ticker, receivedAt: Date.now() })
+        }
       } catch {
         // Ignore malformed or unrelated frames; the stream remains active.
       }

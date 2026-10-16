@@ -97,7 +97,8 @@ The four PostgreSQL integration cases are ignored by default and require an isol
 | Vite browser app | Usually `http://localhost:5173` |
 | Rust API | `http://127.0.0.1:8080` |
 | PostgreSQL | Local configured PostgreSQL service/connection |
-| Binance stream | `wss://stream.binance.com:9443/ws/ethbtc@ticker` |
+| Binance combined stream | `wss://stream.binance.com:9443/stream?streams=ethbtc@ticker/ethbtc@kline_1m` (the selected interval replaces `1m`) |
+| Binance historical klines | `https://api.binance.com/api/v3/klines` |
 | CoinGecko REST | `https://api.coingecko.com/api/v3/simple/price` |
 
 For supported behavior and important limits see [usage](./usage.md), [environment variables](./05-deployment/environment.md), and [troubleshooting](./troubleshooting.md).

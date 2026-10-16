@@ -12,10 +12,12 @@ DexSYS is an academic software-engineering MVP demonstrating a browser trading i
 | Auth0 access-token validation and user-scoped orders | Implemented for order routes |
 | ETH/BTC and BTC/ETH limit-order entry, matching, persistence and cancel | Implemented as a local off-chain prototype; engine state is in-process |
 | ETHBTC market spot ticker and reciprocal BTC/ETH display | Implemented via public Binance WebSocket |
+| ETH/BTC and reciprocal BTC/ETH candlestick chart | Implemented with Binance historical klines and live kline stream; 1m, 5m, and 15m |
 | USD references and 24-hour changes | Implemented via public CoinGecko REST |
 | Native ETH `SettlementVault` deposit/withdrawal | Implemented/tested standalone; no app integration |
 | Wallet connect/signing, wallet balance, balance reservation, on-chain trade settlement | Not implemented |
-| AMM, public orderbook/trade-history API, historical chart, live depth, volume | Not implemented |
+| Read-only DexSYS resting order-book depth | Implemented via public polling endpoint; local in-memory matching-engine levels only |
+| AMM, trade-history API, DexSYS trading volume | Not implemented |
 | Production deployment, Docker/Compose, CI/CD | Not configured |
 
 See the [SRS](./docs/01-requirements/SRS.md) and [functional requirements/traceability](./docs/01-requirements/functional-requirements.md) for the as-built boundary.
@@ -26,9 +28,10 @@ See the [SRS](./docs/01-requirements/SRS.md) and [functional requirements/tracea
 Browser (React/Vite)
   ├── Vite /api proxy ──> Rust Axum API (127.0.0.1:8080)
   │                         ├── PostgreSQL (SQLx migrations/repositories)
-  │                         └── per-pair in-memory matching engine
+  │                         └── per-pair in-memory matching engine + read-only depth snapshots
   ├── Auth0 SPA / access token (orders only)
-  ├── Binance public ETHBTC WebSocket (spot ticker)
+  ├── Binance public ETHBTC WebSocket (combined spot ticker + selected kline interval)
+  ├── Binance public REST klines (candlestick history; reciprocal BTC/ETH display)
   └── CoinGecko public REST (USD reference prices)
 
 Hardhat/Solidity SettlementVault ── standalone; not connected to order flow
@@ -49,6 +52,7 @@ Order records and matcher-produced executions are persisted. A `Filled` status i
 │   └── migrations/              # PostgreSQL schema and ownership/priority changes
 ├── frontend/
 │   ├── src/App.tsx              # trading UI
+│   ├── src/components/          # responsive Lightweight Charts candlestick chart
 │   ├── src/services/            # API, Auth0-backed orders, Binance, CoinGecko
 │   └── src/domain/              # view/domain helpers and tests
 ├── contracts/
@@ -101,7 +105,7 @@ DEXSYS_TEST_DATABASE_URL=postgresql://localhost/dexsys_test \
 (cd contracts && npm ci && npm test && npx hardhat build)
 ```
 
-The four ignored database cases write uniquely named rows and do not clean them up. Do not point them at a development/shared database. Full prerequisites and test scope are in the [test plan](./docs/04-testing/test-plan.md); no coverage percentage is published because no coverage report is configured.
+The frontend chart and DexSYS depth view are verified locally by running `cd frontend && npm ci && npm run dev` and opening `http://localhost:5173` with Auth0 configured; run the Rust API and PostgreSQL separately. Candles use public Binance data; the depth tab polls the local engine through `GET /market/depth/{base}/{quote}` every 2.5 seconds. Depth is not Binance liquidity or DexSYS trade volume. The four ignored database cases write uniquely named rows and do not clean them up. Do not point them at a development/shared database. Full prerequisites and test scope are in the [test plan](./docs/04-testing/test-plan.md); no coverage percentage is published because no coverage report is configured.
 
 ## Documentation index
 

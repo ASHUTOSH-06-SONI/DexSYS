@@ -2,7 +2,7 @@
 
 ## Protected routes
 
-`GET /`, `GET /health`, and `GET /tokens/{symbol}` are public. All four `/orders` operations are protected by `Authorization: Bearer <Auth0 API access token>`.
+`GET /`, `GET /health`, `GET /tokens/{symbol}`, and `GET /market/depth/{base}/{quote}` are public. All four `/orders` operations are protected by `Authorization: Bearer <Auth0 API access token>`.
 
 The backend validates RS256 tokens against the Auth0 tenant JWKS, configured issuer, audience, expiry, and a non-empty subject. `AUTH0_DOMAIN` must be the tenant hostname without scheme or path. `AUTH0_AUDIENCE` defaults to `https://api.dexsys.local`. Auth0 tenant/JWKS errors return `503`; missing, malformed, expired, invalid-signature, wrong-issuer, or wrong-audience tokens return `401`.
 

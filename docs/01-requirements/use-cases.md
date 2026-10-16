@@ -34,10 +34,10 @@ Token values are seeded reference values, not wallet balances or guaranteed curr
 
 ## UC-04 — Observe external market data
 
-1. Frontend opens Binance public `ETHBTC` ticker WebSocket and separately polls CoinGecko REST.
-2. It displays the Binance last price for ETH/BTC and reciprocal for BTC/ETH.
-3. It displays CoinGecko USD prices and 24-hour changes. Provider errors and stale/connecting state are explicit.
-4. This data does not enter the backend matcher. No live depth, chart history, or volume is supplied.
+1. Frontend subscribes to Binance's public `ETHBTC` ticker and selected kline interval over a combined WebSocket, and requests historical klines from Binance REST.
+2. It displays the Binance last price and candlesticks for ETH/BTC, with reciprocal prices for BTC/ETH.
+3. It separately displays CoinGecko USD prices and 24-hour changes. Provider errors and stale/connecting state are explicit.
+4. This data does not enter the backend matcher. The separate Depth tab polls DexSYS's public read-only order-book endpoint, which returns actual in-memory resting orders; it does not show Binance depth or DexSYS trade volume.
 
 ## UC-05 — Deposit and withdraw from standalone vault
 

@@ -17,6 +17,7 @@ dependencies = [
  "dotenvy",
  "jsonwebtoken",
  "matching-engine",
+ "orderbook",
  "rand 0.8.8",
  "reqwest",
  "rsa",
