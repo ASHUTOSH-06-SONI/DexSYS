@@ -28,7 +28,9 @@ async fn main() {
     let authenticator = Authenticator::from_env().expect("Invalid Auth0 configuration");
     let app = routes::router(authenticator).with_state(state);
     let port: u16 = std::env::var("PORT")
-        .unwrap_or_else(|_| "8080".to_string())
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "8080".to_string())
         .parse()
         .expect("PORT must be a valid port number");
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
